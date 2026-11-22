@@ -1,0 +1,1833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>ASCII Christmas Tree</title>
+<link rel="icon" href="data:,">
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#666e7d;}
+canvas{display:block;position:fixed;left:0;top:0;touch-action:none;-webkit-tap-highlight-color:transparent;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function () {
+'use strict';
+
+/* ------------------------------------------------------------------ */
+/* constants and small helpers                                         */
+/* ------------------------------------------------------------------ */
+
+const TAU = Math.PI * 2;
+const NC = 124;
+const RMAX = 0.32 * NC;
+const EXT = (0.845 - 0.698) / (0.698 - 0.273);
+const RD = 0.8 * NC;
+const COMET_A0 = 0.4;
+const FILM_END = 12;
+
+function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+function sstep(a, b, x) { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }
+function easeIO(x) {
+  x = clamp01(x);
+  return x < 0.5 ? 0.5 * Math.pow(2 * x, 1.5) : 1 - 0.5 * Math.pow(2 - 2 * x, 1.5);
+}
+function easeOutCubic(x) { x = clamp01(x); const k = 1 - x; return 1 - k * k * k; }
+function easeOutBack(x, s) {
+  x = clamp01(x);
+  const c1 = s === undefined ? 1.70158 : s;
+  const c3 = c1 + 1;
+  const k = x - 1;
+  return 1 + c3 * k * k * k + c1 * k * k;
+}
+function Fof(t) { return easeIO((t - 1.8) / 4.35) * 1.12; }
+function tOfF(F) {
+  if (F <= 0) return 1.8;
+  const e = F / 1.12;
+  if (e >= 1) return Infinity;
+  const x = e < 0.5 ? Math.pow(2 * e, 1 / 1.5) / 2 : 1 - Math.pow(2 * (1 - e), 1 / 1.5) / 2;
+  return 1.8 + 4.35 * x;
+}
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function h32(a, b, c) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul((b | 0) + 0x632be5ab, 0x165667b1) ^ Math.imul((c | 0) + 0x5bd1e995, 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function code(s) { return s.charCodeAt(0); }
+
+/* rainbow ramp for lights: pink -> violet -> blue -> cyan -> mint -> pale yellow -> gold and back */
+const RAMP = [318, 282, 228, 190, 150, 56, 38, 56, 150, 190, 228, 282];
+function rampHue(u) {
+  u -= Math.floor(u);
+  const s = u * 12, i = s | 0, f = s - i;
+  const a = RAMP[i], b = RAMP[(i + 1) % 12];
+  return a + (b - a) * f;
+}
+function pastelHue(u) { return rampHue(u); }
+
+/* colour keys: 5 bits per channel + 4 bits alpha, cached as strings */
+const RGB = new Float32Array(3);
+function hslRGB(h, s, l) {
+  h -= 360 * Math.floor(h / 360);
+  s = s < 0 ? 0 : s > 1 ? 1 : s;
+  l = l < 0 ? 0 : l > 1 ? 1 : l;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = h / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if (hp < 1) { r = c; g = x; b = 0; }
+  else if (hp < 2) { r = x; g = c; b = 0; }
+  else if (hp < 3) { r = 0; g = c; b = x; }
+  else if (hp < 4) { r = 0; g = x; b = c; }
+  else if (hp < 5) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  RGB[0] = (r + m) * 255; RGB[1] = (g + m) * 255; RGB[2] = (b + m) * 255;
+}
+function rgbk(r, g, b, a) {
+  let ai = (a * 15 + 0.5) | 0;
+  if (ai <= 0) return -1;
+  if (ai > 15) ai = 15;
+  r = r < 0 ? 0 : r > 255 ? 255 : r;
+  g = g < 0 ? 0 : g > 255 ? 255 : g;
+  b = b < 0 ? 0 : b > 255 ? 255 : b;
+  return (((r * 0.12157 + 0.5) | 0) << 14) | (((g * 0.12157 + 0.5) | 0) << 9) | (((b * 0.12157 + 0.5) | 0) << 4) | ai;
+}
+function hslk(h, s, l, a) {
+  hslRGB(h, s * 0.01, l * 0.01);
+  return rgbk(RGB[0], RGB[1], RGB[2], a === undefined ? 1 : a);
+}
+const PAL = new Array(1 << 19);
+function palStr(k) {
+  let s = PAL[k];
+  if (s === undefined) {
+    const r = Math.round(((k >> 14) & 31) * 255 / 31);
+    const g = Math.round(((k >> 9) & 31) * 255 / 31);
+    const b = Math.round(((k >> 4) & 31) * 255 / 31);
+    const a = (k & 15) / 15;
+    s = a >= 1 ? 'rgb(' + r + ',' + g + ',' + b + ')' : 'rgba(' + r + ',' + g + ',' + b + ',' + a.toFixed(3) + ')';
+    PAL[k] = s;
+  }
+  return s;
+}
+const CHS = [];
+for (let i = 0; i < 128; i++) CHS.push(String.fromCharCode(i));
+
+const C_AT = code('@'), C_HASH = code('#'), C_PLUS = code('+'), C_COLON = code(':'), C_DOT = code('.');
+const C_STAR = code('*'), C_PIPE = code('|'), C_DASH = code('-'), C_EQ = code('='), C_SL = code('/'), C_BS = code('\\');
+const C_O = code('O'), C_o = code('o'), C_0 = code('0'), C_8 = code('8'), C_AMP = code('&'), C_PCT = code('%'), C_x = code('x');
+const TREE_G = [C_8, C_AMP, C_PCT, C_HASH, C_AT];
+
+/* ------------------------------------------------------------------ */
+/* canvas, grid and layout                                             */
+/* ------------------------------------------------------------------ */
+
+const cv = document.getElementById('c');
+const mctx = cv.getContext('2d', { alpha: false });
+const off = document.createElement('canvas');
+const octx = off.getContext('2d');
+const bloomA = document.createElement('canvas');
+const actx = bloomA.getContext('2d');
+const bloomB = document.createElement('canvas');
+const bctx = bloomB.getContext('2d');
+const bgc = document.createElement('canvas');
+const bgctx = bgc.getContext('2d');
+const FILTER_OK = typeof actx.filter === 'string';
+
+let W = 0, H = 0, DPR = 1, PW = 0, CW = 0, CH = 0, AR = 1 / 1.62;
+let cols = 0, rows = 0, gridX0 = 0, gridY0 = 0, colOff = 0, cx = 62;
+let floorRow = 0, baseRow = 0, tipRow = 0, starRow = 0, treeH = 1, TILT = 0, GTILT = 0;
+let NCELL = 0, chr = null, clr = null, dep = null, tag = null, dim = null, sortBuf = null;
+let XP = null, YP = null, FONT = '';
+let dirty = true;
+
+function layout() {
+  W = Math.max(1, window.innerWidth);
+  H = Math.max(1, window.innerHeight);
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  PW = Math.min(W, H * 9 / 16);
+  CW = PW / NC;
+  CH = CW * 1.62;
+  AR = CW / CH;
+  rows = Math.max(24, Math.floor(H / CH));
+  const stageLeft = (W - PW) / 2;
+  colOff = Math.max(0, Math.ceil(stageLeft / CW));
+  cols = colOff * 2 + NC;
+  gridX0 = stageLeft - colOff * CW;
+  gridY0 = (H - rows * CH) / 2;
+  cx = colOff + NC / 2;
+  floorRow = rows * 0.845;
+  baseRow = rows * 0.698;
+  tipRow = rows * 0.273;
+  starRow = tipRow - 2;
+  treeH = baseRow - tipRow;
+  TILT = 0.17 * AR;
+  GTILT = 0.28 * AR;
+
+  NCELL = cols * rows;
+  chr = new Uint8Array(NCELL);
+  clr = new Int32Array(NCELL);
+  dep = new Float32Array(NCELL);
+  tag = new Uint8Array(NCELL);
+  dim = new Float32Array(NCELL);
+  sortBuf = new Float64Array(NCELL);
+
+  cv.width = Math.max(1, Math.round(W * DPR));
+  cv.height = Math.max(1, Math.round(H * DPR));
+  cv.style.width = W + 'px';
+  cv.style.height = H + 'px';
+  off.width = cv.width; off.height = cv.height;
+  bloomA.width = Math.max(1, cv.width >> 1); bloomA.height = Math.max(1, cv.height >> 1);
+  bloomB.width = Math.max(1, cv.width >> 2); bloomB.height = Math.max(1, cv.height >> 2);
+  bgc.width = cv.width; bgc.height = cv.height;
+  const gr = bgctx.createLinearGradient(0, 0, 0, bgc.height);
+  gr.addColorStop(0, '#323a47');
+  gr.addColorStop(0.55, '#394250');
+  gr.addColorStop(0.86, '#4b5463');
+  gr.addColorStop(1, '#666e7d');
+  bgctx.fillStyle = gr;
+  bgctx.fillRect(0, 0, bgc.width, bgc.height);
+
+  XP = new Float32Array(cols);
+  YP = new Float32Array(rows);
+  for (let i = 0; i < cols; i++) XP[i] = (gridX0 + (i + 0.5) * CW) * DPR;
+  for (let j = 0; j < rows; j++) YP[j] = (gridY0 + (j + 0.5) * CH) * DPR + CH * DPR * 0.04;
+  FONT = 'bold ' + (0.95 * CH * DPR).toFixed(2) + 'px Menlo, Consolas, "DejaVu Sans Mono", monospace';
+  dirty = true;
+}
+
+function clearGrid() {
+  chr.fill(0);
+  dep.fill(-1e9);
+  tag.fill(0);
+  dim.fill(1);
+}
+
+function put(x, y, c, k, z) {
+  if (k < 0) return;
+  const ix = Math.floor(x), iy = Math.floor(y);
+  if (ix < 0 || iy < 0 || ix >= cols || iy >= rows) return;
+  const i = iy * cols + ix;
+  if (z >= dep[i]) { dep[i] = z; chr[i] = c; clr[i] = k; tag[i] = 0; }
+}
+
+/* halos: + : . sprinkled into empty cells around bright sources */
+const HMAX = 700;
+const HX = new Float32Array(HMAX), HY = new Float32Array(HMAX), HRAD = new Float32Array(HMAX);
+const HHU = new Float32Array(HMAX), HSA = new Float32Array(HMAX), HLI = new Float32Array(HMAX), HST = new Float32Array(HMAX);
+let haloN = 0;
+function addHalo(x, y, rad, h, s, l, st) {
+  if (haloN >= HMAX) return;
+  HX[haloN] = x; HY[haloN] = y; HRAD[haloN] = rad; HHU[haloN] = h; HSA[haloN] = s; HLI[haloN] = l; HST[haloN] = st;
+  haloN++;
+}
+function applyHalos(hf) {
+  for (let n = 0; n < haloN; n++) {
+    const x = HX[n], y = HY[n], R = HRAD[n], st = HST[n];
+    const ry = R * AR;
+    const x0 = Math.max(0, Math.floor(x - R)), x1 = Math.min(cols - 1, Math.floor(x + R));
+    const y0 = Math.max(0, Math.floor(y - ry)), y1 = Math.min(rows - 1, Math.floor(y + ry));
+    for (let iy = y0; iy <= y1; iy++) {
+      const dy = (iy + 0.5 - y) / AR;
+      for (let ix = x0; ix <= x1; ix++) {
+        const i = iy * cols + ix;
+        if (chr[i]) continue;
+        const dx = ix + 0.5 - x;
+        const d = Math.sqrt(dx * dx + dy * dy) / R;
+        if (d >= 1) continue;
+        const q = 1 - d;
+        const p = st * q * Math.sqrt(q);
+        if (h32(ix * 31 + n * 7, iy, hf) >= p) continue;
+        const c = d < 0.34 ? C_PLUS : d < 0.67 ? C_COLON : C_DOT;
+        const k = hslk(HHU[n], HSA[n], HLI[n] * (1 - 0.28 * d), 0.88 - 0.42 * d);
+        if (k < 0) continue;
+        chr[i] = c; clr[i] = k; dep[i] = -1e8;
+      }
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* tree generation (seeded, once)                                      */
+/* ------------------------------------------------------------------ */
+
+const rng = mulberry32(20251224);
+const TIER_R = [1.08, 0.80, 0.62, 0.46, 0.32, 0.19];
+const TFB = [0.0, 0.215, 0.405, 0.565, 0.70, 0.815];
+const TFT = [0.33, 0.50, 0.66, 0.79, 0.90, 1.0];
+const TNL = [13, 11, 9, 8, 7, 6];
+const TDR = [5.4, 4.4, 3.6, 2.9, 2.3, 1.7];
+const tiers = [];
+for (let i = 0; i < 6; i++) {
+  const n = TNL[i];
+  const wts = [];
+  let sum = 0;
+  for (let k = 0; k < n; k++) { const w = 0.72 + 0.56 * rng(); wts.push(w); sum += w; }
+  const bounds = [0];
+  let acc = 0;
+  for (let k = 0; k < n; k++) { acc += wts[k] / sum; bounds.push(acc); }
+  bounds[n] = 1;
+  const len = [], bri = [], dro = [];
+  for (let k = 0; k < n; k++) {
+    len.push(0.84 + 0.28 * rng());
+    bri.push(1 + (rng() - 0.5) * (0.4 + 0.1 * i));
+    dro.push(0.65 + 0.7 * rng());
+  }
+  tiers.push({
+    R: RMAX * TIER_R[i] / 1.08, fb: TFB[i], ft: TFT[i], n: n, bounds: bounds,
+    len: len, bri: bri, dro: dro, off: rng() * TAU, depth: 0.2 + 0.05 * i, droop: TDR[i]
+  });
+}
+let LOBE_K = 0, LOBE_V = 0;
+function lobeOf(T, a) {
+  let u = (a - T.off) / TAU;
+  u -= Math.floor(u);
+  let k = 0;
+  while (k < T.n - 1 && u >= T.bounds[k + 1]) k++;
+  LOBE_K = k;
+  LOBE_V = (u - T.bounds[k]) / (T.bounds[k + 1] - T.bounds[k]);
+}
+function lobeEdge(T, a, shift) {
+  lobeOf(T, a - shift);
+  return T.len[LOBE_K] * (1 - T.depth * (1 - Math.pow(Math.sin(Math.PI * LOBE_V), 0.7)));
+}
+
+/* smoothed outer envelope of the tree, radius as a function of height */
+const WN = 256;
+const WENV = new Float32Array(WN + 1);
+(function () {
+  const raw = new Float32Array(WN + 1), mx = new Float32Array(WN + 1);
+  for (let j = 0; j <= WN; j++) {
+    const f = j / WN;
+    let m = 0;
+    for (let i = 0; i < 6; i++) {
+      const T = tiers[i];
+      if (f >= T.fb && f <= T.ft) {
+        const u = (f - T.fb) / (T.ft - T.fb);
+        m = Math.max(m, T.R * Math.pow(1 - u, 1.5) * 1.05);
+      }
+    }
+    raw[j] = m;
+  }
+  for (let j = 0; j <= WN; j++) {
+    let m = 0;
+    for (let k = -4; k <= 4; k++) m = Math.max(m, raw[Math.min(WN, Math.max(0, j + k))]);
+    mx[j] = m;
+  }
+  for (let j = 0; j <= WN; j++) {
+    let s = 0, c = 0;
+    for (let k = -5; k <= 5; k++) { s += mx[Math.min(WN, Math.max(0, j + k))]; c++; }
+    WENV[j] = s / c;
+  }
+  WENV[WN] = 0;
+})();
+function Wenv(f) {
+  if (f <= 0) return WENV[0];
+  if (f >= 1) return 0;
+  const s = f * WN, i = s | 0, fr = s - i;
+  return WENV[i] + (WENV[i + 1] - WENV[i]) * fr;
+}
+
+/* when does one of the two comets pass a point at height fL and angle aL */
+function cometHit(fL, aL) {
+  const p0 = clamp01((1 - fL) / (1 + EXT));
+  let best = Infinity;
+  for (let c = 0; c < 2; c++) {
+    const th = COMET_A0 + c * Math.PI - 4 * TAU * p0;
+    let d = (th - aL) % TAU;
+    if (d < 0) d += TAU;
+    const p = p0 + d / (4 * TAU);
+    if (p <= 1) best = Math.min(best, 5.95 + 3 * p);
+  }
+  return best;
+}
+
+const NB = 150000;
+const PF = new Float32Array(NB), PR = new Float32Array(NB), PSA = new Float32Array(NB), PCA = new Float32Array(NB);
+const PD = new Float32Array(NB), PB = new Float32Array(NB), PWL = new Float32Array(NB), PFR = new Float32Array(NB);
+const PRV = new Float32Array(NB), PTN = new Float32Array(NB), PTH = new Float32Array(NB);
+const PG = new Int8Array(NB), PH = new Int8Array(NB);
+(function genTree() {
+  const tw = [];
+  let tws = 0;
+  for (let i = 0; i < 6; i++) {
+    const T = tiers[i];
+    const w = Math.pow(T.R, 1.45) * (T.ft - T.fb);
+    tws += w;
+    tw.push(tws);
+  }
+  for (let p = 0; p < NB; p++) {
+    const pick = rng() * tws;
+    let i = 0;
+    while (i < 5 && pick > tw[i]) i++;
+    const T = tiers[i], th = T.ft - T.fb;
+    let f, r, a, droop, B, w, thr, frost = 0, tint = Infinity, tintHue = 0;
+    if (rng() < 0.3) {
+      const u = Math.pow(rng(), 0.85);
+      a = rng() * TAU;
+      const edge = T.R * Math.pow(1 - u, 1.5) * lobeEdge(T, a, 0);
+      const q = Math.sqrt(rng());
+      r = edge * 0.9 * q;
+      f = T.fb + u * th;
+      droop = T.droop * q * q * 0.6;
+      B = 0.1 + 0.2 * rng();
+      w = 0.3;
+      thr = f + 0.03 * q;
+    } else {
+      const wr = rng();
+      const wh = wr < 0.34 ? 0 : wr < 0.62 ? 1 : wr < 0.84 ? 2 : 3;
+      const uw = wh * 0.2;
+      const shift = (wh & 1) ? Math.PI / T.n : 0;
+      lobeOf(T, rng() * TAU - shift);
+      const k = LOBE_K;
+      const center = T.off + shift + TAU * (T.bounds[k] + T.bounds[k + 1]) * 0.5;
+      const width = TAU * (T.bounds[k + 1] - T.bounds[k]);
+      const tp = Math.pow(rng(), 0.55);
+      a = center + (rng() - 0.5) * width * (0.25 + 0.85 * tp);
+      const edge = T.R * Math.pow(1 - uw, 1.5) * lobeEdge(T, a, shift);
+      r = tp * edge + (rng() - 0.5) * 1.0;
+      if (r < 0.3) r = 0.3;
+      f = T.fb + uw * th + (rng() - 0.5) * 0.17 * th * (0.5 + 0.5 * tp);
+      droop = T.droop * (1 - 0.15 * wh) * T.dro[k] * tp * tp;
+      const uP = (f - T.fb) / th;
+      const shade = 1 - (i < 5 ? 0.9 : 0.45) * sstep(0.14, 0.5, uP);
+      let an = a / TAU; an -= Math.floor(an);
+      const streak = 0.68 + 0.32 * h32(Math.floor(an * 120), i, 7);
+      B = (0.28 + 0.72 * Math.pow(tp, 1.2)) * shade * streak * T.bri[k];
+      w = 0.5 + 0.5 * tp;
+      thr = f + 0.05 * tp;
+      if (tp > 0.84) {
+        let ac = (a - T.off) / TAU; ac -= Math.floor(ac);
+        const cl = h32(i, Math.floor(ac * T.n * 3), 11);
+        if (cl > 0.58 && i < 5) frost = sstep(0.84, 1, tp) * (0.45 + 0.4 * rng());
+      }
+      if (wh === 0 && tp > 0.9) {
+        tint = cometHit(T.fb, a) + 0.35;
+        tintHue = rampHue(an);
+      }
+    }
+    PF[p] = f; PR[p] = r; PSA[p] = Math.sin(a); PCA[p] = Math.cos(a);
+    PD[p] = droop; PB[p] = B; PWL[p] = w; PFR[p] = frost;
+    PRV[p] = tOfF(thr); PTN[p] = tint; PTH[p] = tintHue;
+    PH[p] = Math.round((rng() - 0.5) * 12);
+    const gr = rng();
+    PG[p] = gr < 0.08 ? -1 : gr > 0.92 ? 1 : 0;
+  }
+})();
+
+/* lights: bulbs along the bottom rim of each tier */
+const bulbs = { f: [], a: [], r: [], d: [], hue: [], gold: [], ton: [], ph: [], fq: [] };
+const LPB = [], LJA = [], LJR = [], LJY = [], LREP = [];
+(function genLights() {
+  const tmp = [];
+  let nR = 0, nG = 0;
+  for (let i = 0; i < 6; i++) {
+    const T = tiers[i];
+    for (let s = 0; s < 2; s++) {
+      const gold = s === 1;
+      const segs = 20, removed = new Uint8Array(segs);
+      let cnt = 0;
+      while (cnt < 5) { const q = Math.floor(rng() * segs); if (!removed[q]) { removed[q] = 1; cnt++; } }
+      const spacing = gold ? 8 : 2.4;
+      const nb = Math.max(4, Math.round(TAU * T.R * (gold ? 0.8 : 0.92) / spacing));
+      for (let b = 0; b < nb; b++) {
+        const a = T.off + TAU * (b + 0.5 + (rng() - 0.5) * 0.3) / nb;
+        let au = (a - T.off) / TAU; au -= Math.floor(au);
+        if (removed[Math.floor(au * segs) % segs]) continue;
+        const e = lobeEdge(T, a, 0);
+        const k = LOBE_K;
+        const r = T.R * e * (gold ? 0.84 : 0.95);
+        const droop = T.droop * T.dro[k] * (gold ? 0.7 : 0.9) + 0.5;
+        let an = a / TAU; an -= Math.floor(an);
+        tmp.push({ f: T.fb, a: a, r: r, d: droop, hue: gold ? 42 : rampHue(an), gold: gold });
+        if (gold) nG++; else nR++;
+      }
+    }
+  }
+  const ppbR = Math.max(1, Math.round(5000 * 0.87 / nR));
+  const ppbG = Math.max(1, Math.round(5000 * 0.13 / nG));
+  for (let b = 0; b < tmp.length; b++) {
+    const B = tmp[b];
+    bulbs.f.push(B.f); bulbs.a.push(B.a); bulbs.r.push(B.r); bulbs.d.push(B.d);
+    bulbs.hue.push(B.hue); bulbs.gold.push(B.gold ? 1 : 0);
+    bulbs.ton.push(cometHit(B.f, B.a));
+    bulbs.ph.push(rng() * TAU); bulbs.fq.push(1.6 + 3.4 * rng());
+    const n = B.gold ? ppbG : ppbR;
+    for (let j = 0; j < n; j++) {
+      LPB.push(b);
+      LJA.push((rng() - 0.5) * 0.45 / Math.max(2, B.r));
+      LJR.push((rng() - 0.5) * 0.5);
+      LJY.push((rng() - 0.5) * 0.45);
+      LREP.push(j === 0 ? 1 : 0);
+    }
+  }
+})();
+const NL = LPB.length;
+const LB_ = Int32Array.from(LPB), LJA_ = Float32Array.from(LJA), LJR_ = Float32Array.from(LJR), LJY_ = Float32Array.from(LJY), LREP_ = Uint8Array.from(LREP);
+const BF_ = Float32Array.from(bulbs.f), BA_ = Float32Array.from(bulbs.a), BR_ = Float32Array.from(bulbs.r), BD_ = Float32Array.from(bulbs.d);
+const BH_ = Float32Array.from(bulbs.hue), BG_ = Uint8Array.from(bulbs.gold), BT_ = Float32Array.from(bulbs.ton);
+const BP_ = Float32Array.from(bulbs.ph), BQ_ = Float32Array.from(bulbs.fq);
+
+/* red baubles */
+const baubles = [];
+(function () {
+  const cnt = [5, 4, 4, 3, 3, 2];
+  for (let i = 0; i < 6; i++) {
+    const T = tiers[i];
+    for (let k = 0; k < cnt[i]; k++) {
+      const a = T.off + TAU * (k + 0.5 + (rng() - 0.5) * 0.5) / cnt[i];
+      const e = lobeEdge(T, a, 0);
+      const kk = LOBE_K;
+      baubles.push({
+        f: T.fb, sa: Math.sin(a), ca: Math.cos(a), r: T.R * e * 0.8,
+        d: T.droop * T.dro[kk] * 0.64 + 1.1, trev: tOfF(T.fb + 0.05) + 0.1 + rng() * 0.12
+      });
+    }
+  }
+})();
+
+/* gifts: five small point clouds */
+const GIFT_DEF = [
+  { w: 12, d: 12, h: 12, hue: 356, sat: 72, rh: 44, rs: 66, ang: 0.35, dist: 0.95 },
+  { w: 7, d: 7, h: 7, hue: 42, sat: 66, rh: 356, rs: 72, ang: 1.6, dist: 0.9 },
+  { w: 13, d: 9, h: 4.6, hue: 150, sat: 58, rh: 44, rs: 66, ang: 2.75, dist: 1.0 },
+  { w: 6, d: 6, h: 14, hue: 220, sat: 62, rh: 44, rs: 66, ang: 3.95, dist: 0.92 },
+  { w: 9.5, d: 9.5, h: 8.5, hue: 318, sat: 60, rh: 44, rs: 66, ang: 5.15, dist: 1.02 }
+];
+const GPN = 2400;
+const gifts = [];
+(function genGifts() {
+  for (let g = 0; g < 5; g++) {
+    const D = GIFT_DEF[g];
+    const X = new Float32Array(GPN), Y = new Float32Array(GPN), Z = new Float32Array(GPN);
+    const TY = new Uint8Array(GPN), NI = new Uint8Array(GPN);
+    const rbw = Math.max(0.65, 0.085 * Math.min(D.w, D.d));
+    const sideX = D.d * D.h, sideZ = D.w * D.h, top = D.w * D.d;
+    const tot = 2 * sideX + 2 * sideZ + top;
+    const nBow = Math.round(GPN * 0.08);
+    const bl = Math.max(1.3, 0.2 * Math.min(D.w, D.d));
+    for (let p = 0; p < GPN; p++) {
+      let x, y, z, ty, ni;
+      if (p < nBow) {
+        const q = rng();
+        if (q < 0.15) {
+          x = (rng() - 0.5) * 1.0; y = D.h + 0.35 + rng() * 0.5; z = (rng() - 0.5) * 1.0;
+        } else {
+          const side = q < 0.575 ? -1 : 1;
+          const th = rng() * TAU;
+          const rr = bl * (0.55 + 0.12 * rng());
+          x = side * (bl * 0.62 + Math.cos(th) * rr * 0.75);
+          y = D.h + bl * 0.55 + Math.sin(th) * rr * 0.6;
+          z = side * 0.25 * Math.cos(th) + (rng() - 0.5) * 0.5;
+        }
+        ty = 5; ni = 4;
+      } else {
+        let s = rng() * tot;
+        const u = rng() - 0.5, v = rng();
+        if (s < top) {
+          x = u * D.w; z = (rng() - 0.5) * D.d; y = D.h; ni = 4;
+          if (Math.abs(x) < rbw) ty = 4;
+          else if (Math.abs(z) < rbw) ty = 3;
+          else ty = 1;
+        } else {
+          s -= top;
+          y = v * D.h;
+          if (s < 2 * sideX) {
+            const sg = s < sideX ? 1 : -1;
+            x = sg * D.w / 2; z = u * D.d; ni = sg > 0 ? 0 : 1;
+            ty = Math.abs(z) < rbw ? 2 : 0;
+          } else {
+            const sg = s - 2 * sideX < sideZ ? 1 : -1;
+            z = sg * D.d / 2; x = u * D.w; ni = sg > 0 ? 2 : 3;
+            ty = Math.abs(x) < rbw ? 2 : 0;
+          }
+        }
+      }
+      X[p] = x; Y[p] = y; Z[p] = z; TY[p] = ty; NI[p] = ni;
+    }
+    const dist = RMAX * D.dist;
+    gifts.push({
+      D: D, X: X, Y: Y, Z: Z, TY: TY, NI: NI,
+      X0: dist * Math.sin(D.ang), Z0: dist * Math.cos(D.ang), yaw: D.ang + 0.4 + rng() * 0.8,
+      t0: 9.05 + 0.26 * g
+    });
+  }
+})();
+
+/* snow */
+const SN = 920;
+const SNU = new Float32Array(SN), SNY = new Float32Array(SN), SNV = new Float32Array(SN), SNA = new Float32Array(SN);
+const SNSW = new Float32Array(SN), SNFQ = new Float32Array(SN), SNPH = new Float32Array(SN), SNK = new Int32Array(SN);
+for (let i = 0; i < SN; i++) {
+  SNU[i] = -1.5 + 4 * rng();
+  SNY[i] = rng();
+  const dpt = rng();
+  SNV[i] = 0.015 + 0.035 * dpt;
+  SNA[i] = 0.22 + 0.78 * dpt;
+  SNSW[i] = 0.25 + 0.75 * rng() * (0.4 + 0.6 * dpt);
+  SNFQ[i] = 0.3 + 0.6 * rng();
+  SNPH[i] = rng() * TAU;
+  SNK[i] = rgbk(248, 250, 255, SNA[i]);
+}
+
+/* dust motes */
+const DUSTN = 170;
+const DA = new Float32Array(DUSTN), DF0 = new Float32Array(DUSTN), DSP = new Float32Array(DUSTN), DRO = new Float32Array(DUSTN);
+const DHU = new Float32Array(DUSTN), DCH = new Uint8Array(DUSTN), DTW = new Float32Array(DUSTN);
+for (let i = 0; i < DUSTN; i++) {
+  DA[i] = rng() * TAU; DF0[i] = rng(); DSP[i] = 0.03 + 0.045 * rng(); DRO[i] = 2 + 9 * rng();
+  DHU[i] = pastelHue(rng()); const q = rng(); DCH[i] = q < 0.55 ? C_DOT : q < 0.85 ? C_PLUS : C_STAR;
+  DTW[i] = rng() * TAU;
+}
+
+/* impact sparks, ring sparks, rim motes */
+const IMPN = 80;
+const IMA = new Float32Array(IMPN), IMV = new Float32Array(IMPN), IMU = new Float32Array(IMPN), IML = new Float32Array(IMPN), IMD = new Float32Array(IMPN);
+for (let i = 0; i < IMPN; i++) {
+  IMA[i] = rng() * TAU; IMV[i] = 10 + 36 * rng(); IMU[i] = 8 + 20 * rng(); IML[i] = 0.55 + 0.4 * rng(); IMD[i] = rng() * 0.05;
+}
+const RSN = 54;
+const RSA = new Float32Array(RSN), RSV = new Float32Array(RSN), RSU = new Float32Array(RSN), RSH = new Float32Array(RSN);
+for (let i = 0; i < RSN; i++) { RSA[i] = rng() * TAU; RSV[i] = 7 + 14 * rng(); RSU[i] = 5 + 12 * rng(); RSH[i] = pastelHue(rng()); }
+const MOTEN = 14;
+const MOA = new Float32Array(MOTEN), MOP = new Float32Array(MOTEN);
+for (let i = 0; i < MOTEN; i++) { MOA[i] = rng() * TAU; MOP[i] = rng(); }
+
+/* PLAY in a 5x7 block font */
+const FONT57 = {
+  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+  A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..']
+};
+
+/* ------------------------------------------------------------------ */
+/* scene pieces                                                        */
+/* ------------------------------------------------------------------ */
+
+let rot = 0, cR = 1, sR = 0, gF = 0, F = 0, hf = 0;
+const T_SHRINK = tOfF(0.96);
+
+function drawSnow(g) {
+  const span = rows + 2;
+  for (let i = 0; i < SN; i++) {
+    const x = colOff + SNU[i] * NC + Math.sin(g * SNFQ[i] + SNPH[i]) * SNSW[i];
+    if (x < 0 || x >= cols) continue;
+    let yy = SNY[i] + g * SNV[i];
+    yy -= Math.floor(yy);
+    put(x, yy * span - 1, C_PLUS, SNK[i], -1e7 + SNA[i]);
+  }
+}
+
+function drawPlay(g) {
+  const word = 'PLAY';
+  const pxW = 3, pxH = 2;
+  const totalPx = word.length * 5 + (word.length - 1);
+  const left = Math.round(cx - totalPx * pxW / 2);
+  const top = Math.round(rows * 0.5 - 7 * pxH / 2);
+  const tf = Math.floor(g * 9);
+  for (let l = 0; l < word.length; l++) {
+    const glyph = FONT57[word[l]];
+    for (let r = 0; r < 7; r++) {
+      for (let c = 0; c < 5; c++) {
+        if (glyph[r][c] !== '#') continue;
+        for (let sy = 0; sy < pxH; sy++) {
+          for (let sx = 0; sx < pxW; sx++) {
+            const ix = left + (l * 6 + c) * pxW + sx;
+            const iy = top + r * pxH + sy;
+            const h = h32(ix, iy, tf);
+            const ch = h < 0.1 ? C_AT : h < 0.17 ? C_STAR : C_HASH;
+            const L = 74 + 12 * Math.sin(g * 1.8 + ix * 0.12 - iy * 0.2) + (h < 0.1 ? 12 : 0);
+            put(ix + 0.5, iy + 0.5, ch, hslk(44, 46, L), 10);
+          }
+        }
+      }
+    }
+  }
+}
+
+function drawFallingLight(t) {
+  if (t < 0.05 || t >= 0.39) return;
+  const p = (t - 0.05) / 0.34;
+  const yH = -2 + (floorRow + 2) * p * p;
+  for (let i = 22; i >= 1; i--) {
+    const y = yH - i;
+    if (y < -1) continue;
+    const q = 1 - i / 23;
+    const ch = i <= 6 ? C_HASH : C_PIPE;
+    put(cx, y, ch, hslk(42, 60, 70 + 25 * q, Math.pow(q, 1.3)), 50 - i);
+  }
+  put(cx, yH, C_AT, hslk(42, 50, 98), 60);
+  addHalo(cx, yH, 6, 42, 60, 88, 0.6);
+}
+
+function drawDisc(t) {
+  if (t < 0.39) return;
+  const tau = t - 0.39;
+  const spread = RD * easeOutCubic(tau / 1.0);
+  const vR = RD * GTILT;
+  const iy0 = Math.max(0, Math.floor(floorRow - vR)), iy1 = Math.min(rows - 1, Math.floor(floorRow + vR));
+  const sweepA = (t - 1.4) * 1.1;
+  const pulseR = t > 1.4 ? RD * (((t - 1.4) / 2.4) % 1) : -100;
+  const pulseAmp = t > 1.4 ? 1 - pulseR / RD : 0;
+  const flash = t > 8.95 ? Math.exp(-(t - 8.95) * 4.5) : 0;
+  const landFlash = tau < 0.5 ? (1 - tau / 0.5) : 0;
+  const sec = Math.PI / 4;
+  for (let iy = iy0; iy <= iy1; iy++) {
+    const zg = (iy + 0.5 - floorRow) / GTILT;
+    if (Math.abs(zg) > RD) continue;
+    const halfw = Math.sqrt(RD * RD - zg * zg);
+    const ix0 = Math.max(0, Math.floor(cx - halfw)), ix1 = Math.min(cols - 1, Math.floor(cx + halfw));
+    for (let ix = ix0; ix <= ix1; ix++) {
+      const dx = ix + 0.5 - cx;
+      const r = Math.sqrt(dx * dx + zg * zg);
+      if (r > RD) continue;
+      const rr = Math.max(r, 0.5);
+      const hr = 0.5 * (Math.abs(dx) + Math.abs(zg) / GTILT) / rr + 0.3;
+      const ht = 0.5 * (Math.abs(zg) + Math.abs(dx) / GTILT) / rr + 0.3;
+      const i = iy * cols + ix;
+      let done = false;
+      if (tau < 1.05) {
+        for (let k = 0; k < 3; k++) {
+          const tk = tau - k * 0.075;
+          if (tk < 0 || tk > 0.95) continue;
+          const rk = RD * 1.02 * easeOutCubic(tk / 0.9);
+          if (Math.abs(r - rk) < 1.3 + hr) {
+            const a = 1 - tk / 0.95;
+            const kk = hslk(44, 40, 90 - k * 6, a);
+            if (kk >= 0 && -9000 >= dep[i]) { dep[i] = -9000; chr[i] = C_HASH; clr[i] = kk; tag[i] = 0; }
+            done = true;
+            break;
+          }
+        }
+      }
+      if (done || r > spread) continue;
+      if (spread < RD && spread - r < 1.2 + hr) {
+        const kk = hslk(46, 40, 86);
+        if (-10000 >= dep[i]) { dep[i] = -10000; chr[i] = h32(ix, iy, 3) < 0.5 ? C_HASH : C_EQ; clr[i] = kk; tag[i] = 0; }
+        continue;
+      }
+      const rho = r / RD;
+      let al = Math.atan2(dx, zg) - rot;
+      let pat = 0;
+      if ((rho > 0.965 && rho <= 1.0) || Math.abs(r - RD * 0.927) < 0.9 + hr) pat = C_EQ;
+      else if (rho > 0.6 && rho < 0.9) {
+        let v = (al / TAU) * 16; v -= Math.floor(v);
+        const ra = RD * (0.64 + 0.22 * Math.pow(Math.sin(Math.PI * v), 0.6));
+        if (Math.abs(r - ra) < 0.8 + hr) pat = C_PLUS;
+        else if (Math.abs(r - RD * 0.62) < 0.6 + hr) pat = C_PLUS;
+      }
+      if (!pat && Math.abs(r - RD * 0.57) < 1.6 + hr) pat = C_HASH;
+      if (!pat && Math.abs(r - RD * 0.212) < 1.0 + hr) pat = C_EQ;
+      if (!pat && rho < 0.52 && rho > 0.07) {
+        const kk = Math.round(al / sec);
+        const dl = al - kk * sec;
+        const along = r * Math.cos(dl), perp = Math.abs(r * Math.sin(dl));
+        if (perp < 0.8 + ht) pat = C_HASH;
+        else {
+          const u1 = along - RD * 0.27, u2 = along - RD * 0.39;
+          if (u1 > 0 && u1 < 6.5 && Math.abs(perp - u1 * 0.9) < 0.75 + Math.max(ht, hr) * 0.7) pat = C_PLUS;
+          else if (u2 > 0 && u2 < 5 && Math.abs(perp - u2 * 0.9) < 0.75 + Math.max(ht, hr) * 0.7) pat = C_PLUS;
+        }
+      }
+      let boost = landFlash * 18 * Math.max(0, 1 - rho * 1.5) + flash * 22;
+      if (t > 1.4) {
+        let da = Math.atan2(dx, zg) - sweepA;
+        da = da - TAU * Math.round(da / TAU);
+        boost += 10 * Math.exp(-(da * da) / 0.16);
+        const dp = (r - pulseR) / 3.5;
+        boost += 12 * pulseAmp * Math.exp(-dp * dp);
+      }
+      const hh = h32(ix, iy, 17);
+      let c, k;
+      if (pat) {
+        if (hh > 0.96) continue;
+        c = pat;
+        k = hslk(46, 30, 56 + 14 * h32(ix, iy, 19) + boost);
+      } else {
+        if (hh > 0.7) continue;
+        c = C_DASH;
+        k = hslk(46, 18, 28 + 14 * h32(ix, iy, 23) + boost);
+      }
+      if (-10000 >= dep[i]) { dep[i] = -10000; chr[i] = c; clr[i] = k; tag[i] = 0; }
+    }
+  }
+  if (tau < 0.6) addHalo(cx, floorRow, 14 * (1 - tau / 0.6) + 3, 44, 50, 85, 0.55 * (1 - tau / 0.6));
+  if (tau < 1.05) {
+    for (let j = 0; j < IMPN; j++) {
+      const tj = tau - IMD[j];
+      if (tj < 0 || tj > IML[j]) continue;
+      const hgt = Math.max(0, IMU[j] * tj - 25 * tj * tj);
+      const rr = IMV[j] * tj;
+      const x = cx + rr * Math.sin(IMA[j]);
+      const zz = rr * Math.cos(IMA[j]);
+      const y = floorRow + zz * GTILT - hgt * AR;
+      const age = tj / IML[j];
+      const ch = age < 0.35 ? C_STAR : age < 0.7 ? C_PLUS : C_DOT;
+      put(x, y, ch, hslk(44, 55, 92 - 30 * age, 1 - 0.6 * age), zz + 200);
+    }
+  }
+  if (t > 1.4) {
+    for (let j = 0; j < MOTEN; j++) {
+      let q = (t - 1.4) / 2.8 + MOP[j];
+      q -= Math.floor(q);
+      const a = MOA[j] + Math.floor((t - 1.4) / 2.8 + MOP[j]) * 2.1;
+      const x = cx + RD * 0.97 * Math.sin(a);
+      const zz = RD * 0.97 * Math.cos(a);
+      const y = floorRow + zz * GTILT - q * 16 * AR;
+      const ch = h32(j, Math.floor(t * 9), 5) < 0.5 ? C_DOT : C_PLUS;
+      put(x, y, ch, hslk(44, 60, 78, (1 - q) * 0.9 * Math.min(1, q * 6)), zz);
+    }
+  }
+}
+
+function drawTrunk(t) {
+  if (t < 1.05) return;
+  const top = baseRow - 2.5, bot = floorRow;
+  const total = bot - top;
+  const prog = clamp01((t - 1.05) / 0.45);
+  const curTop = bot - total * prog;
+  for (let iy = Math.floor(curTop); iy <= Math.floor(bot); iy++) {
+    const yc = iy + 0.5;
+    if (yc < curTop || iy < 0 || iy >= rows) continue;
+    const u = clamp01((yc - top) / total);
+    const hw = 3.7 + 1.5 * u * u * u;
+    const fresh = prog < 1 && yc - curTop < 2 ? 6 : 0;
+    for (let ix = Math.floor(cx - hw); ix <= Math.floor(cx + hw); ix++) {
+      const dx = ix + 0.5 - cx;
+      const s = dx / hw;
+      if (s < -1 || s > 1) continue;
+      const ang = Math.asin(s);
+      const sh = Math.max(0, Math.cos(ang + 0.5));
+      const b = Math.pow(sh, 1.6);
+      const bark = 0.78 + 0.22 * h32(Math.floor((ang + rot) * 5 + 100), iy >> 1, 3);
+      const L = 2 + 13 * b * bark + fresh;
+      const bb = b * bark;
+      const ch = bb < 0.2 ? C_8 : bb < 0.45 ? C_PCT : bb < 0.75 ? C_HASH : C_AT;
+      put(ix + 0.5, yc, ch, hslk(20, 46, L), hw * Math.cos(ang) - 0.5);
+    }
+  }
+}
+
+function drawTree(t) {
+  if (t < 1.8) return;
+  const bR = baseRow, HH = treeH, tl = TILT, ccx = cx, cc = cols, rr = rows;
+  const cr = cR, sr = sR;
+  for (let p = 0; p < NB; p++) {
+    const tr = PRV[p];
+    if (t < tr) continue;
+    const sA = PSA[p], cA = PCA[p], r = PR[p];
+    const sP = sA * cr + cA * sr, cP = cA * cr - sA * sr;
+    const x = ccx + r * sP;
+    const z = r * cP;
+    const y = bR - PF[p] * HH + PD[p] + z * tl;
+    const ix = x | 0, iy = y | 0;
+    if (ix < 0 || ix >= cc || iy < 0 || iy >= rr) continue;
+    const i = iy * cc + ix;
+    if (z < dep[i]) continue;
+    const age = t - tr;
+    let L1 = (-0.94 * sP + 0.34 * cP + 0.3) / 1.3;
+    L1 = L1 < 0 ? 0 : L1 > 1 ? 1 : L1;
+    L1 = L1 * L1 * (3 - 2 * L1);
+    const w = PWL[p];
+    let b = PB[p] * ((1 - w) * 0.55 + w * (0.2 + 0.97 * L1));
+    const m = age >= 1.15 ? 1 : age < 0.15 ? 0 : (age - 0.15);
+    if (m < 1) {
+      const cap = (b > 0.5 ? 0.5 : b) * 0.72 + 0.1;
+      b = cap + (b - cap) * m;
+    }
+    const dm = dim[i];
+    b *= dm;
+    if (b > 1) b = 1;
+    let gi;
+    if (age < 0.14) gi = 3;
+    else {
+      gi = ((b * 5) | 0) + PG[p];
+      gi = gi < 0 ? 0 : gi > 4 ? 4 : gi;
+    }
+    const lt = 0.04 + 0.66 * b * (0.85 + 0.15 * b);
+    hslRGB(156 - 16 * L1 + PH[p], 0.72 - 0.22 * b, lt);
+    let R = RGB[0], G = RGB[1], Bc = RGB[2];
+    const fw = PFR[p];
+    if (fw > 0 && m > 0) {
+      const fr = fw * sstep(0.5, 0.92, L1) * m * dm;
+      if (fr > 0.02) {
+        const k = fr * 0.88;
+        R += (248 - R) * k; G += (247 - G) * k; Bc += (246 - Bc) * k;
+        if (fr > 0.35 && gi < 3) gi = 3;
+      }
+    }
+    const ttn = PTN[p];
+    if (t > ttn && dm > 0.9) {
+      const k = Math.min(1, (t - ttn) / 0.5) * 0.32;
+      hslRGB(PTH[p], 0.95, 0.56);
+      R += (RGB[0] - R) * k; G += (RGB[1] - G) * k; Bc += (RGB[2] - Bc) * k;
+    }
+    dep[i] = z; chr[i] = TREE_G[gi]; clr[i] = rgbk(R, G, Bc, 1); tag[i] = 1;
+  }
+}
+
+function drawBaubles(t) {
+  for (let n = 0; n < baubles.length; n++) {
+    const B = baubles[n];
+    const dt = t - B.trev;
+    if (dt < 0) continue;
+    const e = easeOutBack(dt / 0.45, 2.2);
+    const yoff = -3 * (1 - e);
+    const sP = B.sa * cR + B.ca * sR, cP = B.ca * cR - B.sa * sR;
+    const x = cx + B.r * sP, z = B.r * cP;
+    const y = baseRow - B.f * treeH + B.d + z * TILT + yoff;
+    let L1 = clamp01((-0.94 * sP + 0.34 * cP + 0.3) / 1.3);
+    const ix = Math.floor(x), iy = Math.floor(y);
+    const dm = (ix >= 0 && ix < cols && iy >= 0 && iy < rows) ? dim[iy * cols + ix] : 1;
+    const L = (22 + 30 * L1) * dm;
+    const kt = hslk(354, 80, L), kb = hslk(354, 80, L * 0.72);
+    const zz = z + 1.4;
+    if (L1 > 0.3 && dm > 0.9) put(x - 1, y, C_STAR, hslk(10, 30, 95), zz);
+    else put(x - 1, y, C_AT, kt, zz);
+    put(x, y, C_AT, kt, zz);
+    put(x + 1, y, C_AT, kt, zz);
+    put(x - 1, y + 1, C_AT, kb, zz);
+    put(x, y + 1, C_O, kb, zz);
+    put(x + 1, y + 1, C_AT, kb, zz);
+  }
+}
+
+function drawLights(t) {
+  if (t < 5.95) return;
+  for (let j = 0; j < NL; j++) {
+    const b = LB_[j];
+    const ton = BT_[b];
+    if (t < ton) continue;
+    const a = BA_[b] + LJA_[j];
+    const r = BR_[b] + LJR_[j];
+    const sa = Math.sin(a), ca = Math.cos(a);
+    const sP = sa * cR + ca * sR, cP = ca * cR - sa * sR;
+    const x = cx + r * sP, z = r * cP;
+    const y = baseRow - BF_[b] * treeH + BD_[b] + LJY_[j] + z * TILT;
+    const ix = Math.floor(x), iy = Math.floor(y);
+    if (ix < 0 || ix >= cols || iy < 0 || iy >= rows) continue;
+    const i = iy * cols + ix;
+    if (dim[i] < 0.9) continue;
+    const age = t - ton;
+    const flash = age < 0.7 ? Math.exp(-age * 6) : 0;
+    const tw = 0.5 + 0.5 * Math.sin(t * BQ_[b] + BP_[b]);
+    const ch = flash > 0.3 ? C_AT : tw > 0.78 ? C_AT : tw > 0.52 ? C_0 : tw > 0.28 ? C_o : C_STAR;
+    const hue = BH_[b];
+    const yellow = BG_[b] || (hue > 28 && hue < 72);
+    const S = yellow ? 68 : 100;
+    const back = z < 0 ? 0.7 + 0.3 * (1 + z / r) : 1;
+    const L = ((yellow ? 50 : 55) + 9 * tw) * back + flash * 36;
+    put(x, y, ch, hslk(hue, S * (1 - flash * 0.5), L), z + 1.6);
+    if (LREP_[j] && z > -r * 0.2 && (tw > 0.9 || flash > 0.15)) {
+      addHalo(x, y, 2.4 + flash * 3.5, hue, S * 0.85, 62 + flash * 20, 0.3 + flash * 0.5);
+    }
+  }
+}
+
+function giftScale(t, t0) {
+  const d = t - t0;
+  if (d <= 0) return 0;
+  return easeOutBack(d / 0.42, 2.0);
+}
+
+function drawGifts(t) {
+  if (t < 9.05) return;
+  for (let g = 0; g < 5; g++) {
+    const G = gifts[g];
+    const s = giftScale(t, G.t0);
+    if (s <= 0.01) continue;
+    const D = G.D;
+    const cy_ = Math.cos(G.yaw), sy_ = Math.sin(G.yaw);
+    const nx = [cy_, -cy_, sy_, -sy_], nz = [-sy_, sy_, cy_, -cy_];
+    const vis = [0, 0, 0, 0, 1], lam = [0, 0, 0, 0, 0.95];
+    for (let q = 0; q < 4; q++) {
+      const wx = nx[q] * cR + nz[q] * sR;
+      const wz = nz[q] * cR - nx[q] * sR;
+      vis[q] = wz > -0.03 ? 1 : 0;
+      lam[q] = 0.1 + 0.85 * Math.max(0, -0.94 * wx + 0.34 * wz);
+    }
+    for (let p = 0; p < GPN; p++) {
+      const ni = G.NI[p];
+      if (!vis[ni]) continue;
+      const lx = G.X[p] * s, ly = G.Y[p] * s, lz = G.Z[p] * s;
+      const X = G.X0 + lx * cy_ + lz * sy_;
+      const Zf = G.Z0 - lx * sy_ + lz * cy_;
+      const x = cx + X * cR + Zf * sR;
+      const z = Zf * cR - X * sR;
+      const y = floorRow + z * GTILT - ly * AR;
+      const b = lam[ni];
+      const ty = G.TY[p];
+      let c, k;
+      if (ty === 0 || ty === 1) {
+        const band = Math.min(4, (b * 5) | 0);
+        c = TREE_G[band];
+        k = hslk(D.hue, D.sat, 6 + 56 * b);
+      } else if (ty === 2) {
+        c = C_PIPE; k = hslk(D.rh, D.rs, 12 + 60 * b);
+      } else if (ty === 3) {
+        c = C_EQ; k = hslk(D.rh, D.rs, 14 + 62 * b);
+      } else if (ty === 4) {
+        c = C_HASH; k = hslk(D.rh, D.rs, 14 + 62 * b);
+      } else {
+        c = G.Y[p] > D.h + 0.9 ? C_AT : C_AMP;
+        k = hslk(D.rh, D.rs, 30 + 50 * (G.X[p] < 0 ? 0.9 : 0.6));
+      }
+      put(x, y, c, k, z + (ty >= 2 ? 0.05 : 0));
+    }
+  }
+}
+
+function ringRadius(fR) { return Wenv(fR) * 1.14 + 2; }
+
+function drawRing(t) {
+  if (t < 1.2 || t > T_SHRINK + 0.22) return;
+  let fR, sp = 0, sweep = TAU;
+  if (t < 1.8) {
+    fR = 0;
+    sweep = TAU * clamp01((t - 1.2) / 0.6);
+  } else {
+    fR = Math.max(0, Math.min(1, F - 0.025));
+    sp = clamp01((t - T_SHRINK) / 0.2);
+    fR = fR + (1 - fR) * sp;
+  }
+  const pulse = 1 + 0.035 * Math.sin(t * 9);
+  const R = ringRadius(fR) * pulse * (1 - sp);
+  const yc = baseRow - fR * treeH;
+  const bright = (0.85 + 0.15 * Math.sin(t * 9 + 1)) * (1 - 0.6 * sp);
+  const ALPHA = [1, 0.72, 0.48, 0.3];
+  for (let k = 0; k < 4; k++) {
+    const Rk = R + k * 1.7 * (1 - sp);
+    const nS = Math.ceil(TAU * Rk * 1.5) + 8;
+    for (let s = 0; s < nS; s++) {
+      const off_ = s / nS * TAU;
+      if (off_ > sweep) break;
+      const ang = Math.PI + off_;
+      const x = cx + Rk * Math.sin(ang), z = Rk * Math.cos(ang);
+      const y = yc + z * TILT;
+      if (k === 0) {
+        put(x, y, C_HASH, hslk(50, 30, 97 * bright + 3), z + 3);
+        put(x, y - 1, C_HASH, hslk(50, 30, 92 * bright, 0.55), z + 2.9);
+        put(x, y - 2, C_HASH, hslk(50, 30, 88 * bright, 0.25), z + 2.8);
+      } else {
+        const hue = rampHue(ang / TAU + t * 0.18 + k * 0.11);
+        put(x, y, C_HASH, hslk(hue, 85, 70 * bright, ALPHA[k] * (1 - 0.5 * sp)), z + 3 - k * 0.05);
+      }
+    }
+  }
+  if (t < 1.8) {
+    const ang = Math.PI + sweep;
+    const x = cx + R * Math.sin(ang), z = R * Math.cos(ang);
+    put(x, yc + z * TILT, C_AT, hslk(50, 30, 99), z + 4);
+    addHalo(x, yc + z * TILT, 4.5, 50, 40, 92, 0.6);
+    return;
+  }
+  if (sp > 0) addHalo(cx, yc, 3 + 4 * sp, 48, 50, 92, 0.5);
+  /* ripples */
+  for (let j = 0; j < 22; j++) {
+    const tj = 1.8 + j * 0.2;
+    const age = t - tj;
+    if (age < 0 || age > 0.65 || tj > T_SHRINK) continue;
+    const fj = Math.min(1, Fof(tj) + 0.015);
+    const Rj = ringRadius(fj) + age * 22;
+    const yj = baseRow - fj * treeH;
+    const nS = Math.ceil(TAU * Rj * 0.9);
+    const a0 = 1 - age / 0.65;
+    for (let s = 0; s < nS; s++) {
+      if (h32(s, j, 41) > 0.55) continue;
+      const ang = s / nS * TAU;
+      const x = cx + Rj * Math.sin(ang), z = Rj * Math.cos(ang);
+      put(x, yj + z * TILT, age < 0.3 ? C_COLON : C_DOT, hslk(pastelHue(s / nS + j * 0.13), 60, 78, a0 * 0.75), z + 1);
+    }
+  }
+  /* pastel sparks */
+  for (let j = 0; j < RSN; j++) {
+    const tj = 1.8 + (j + 0.5) * (T_SHRINK - 1.8) / RSN;
+    const age = t - tj;
+    if (age < 0 || age > 1.1) continue;
+    const fj = Math.min(1, Fof(tj) + 0.015);
+    const R0 = ringRadius(fj);
+    const rr = R0 + RSV[j] * age;
+    const hgt = RSU[j] * age - 15 * age * age;
+    const x = cx + rr * Math.sin(RSA[j]), z = rr * Math.cos(RSA[j]);
+    const y = baseRow - fj * treeH + z * TILT - hgt * AR;
+    const q = age / 1.1;
+    const ch = q < 0.35 ? C_STAR : q < 0.7 ? C_PLUS : C_DOT;
+    put(x, y, ch, hslk(RSH[j], 65, 82, 1 - 0.7 * q), z + 2);
+  }
+  /* sparkles rising through the centre */
+  for (let j = 0; j < 60; j++) {
+    const tj = 1.8 + j * 0.06;
+    const age = t - tj;
+    if (age < 0 || age > 0.8 || tj > T_SHRINK) continue;
+    const fj = Math.min(1, Fof(tj) + 0.015);
+    const x = cx + (h32(j, 1, 9) - 0.5) * 6;
+    const y = baseRow - fj * treeH - age * 9;
+    const ch = h32(j, Math.floor(t * 9), 13) < 0.5 ? C_STAR : C_PLUS;
+    put(x, y, ch, hslk(48, 50, 92, 1 - age / 0.8), 5);
+  }
+}
+
+function drawStar(t) {
+  if (t < 5.27) return;
+  const a = t - 5.27;
+  const sx = cx, sy = starRow;
+  const Z = 600;
+  const breathe = 1 + 0.06 * Math.sin(t * 1.7);
+  let glint = 0;
+  if (t > 6.3) {
+    const gp = (t - 6.3) % 3.6;
+    if (gp < 0.4) glint = Math.sin(Math.PI * gp / 0.4);
+  }
+  const Lb = 72 + 6 * Math.sin(t * 1.7) + 14 * glint;
+  if (a < 0.38) {
+    const s = easeOutBack(a / 0.22, 2.5);
+    put(sx, sy, C_AT, hslk(44, 66, 80), Z);
+    if (s > 0.5) { put(sx - 1, sy, C_HASH, hslk(44, 66, 74), Z); put(sx + 1, sy, C_HASH, hslk(44, 66, 74), Z); }
+    addHalo(sx, sy, 2.5 + 5 * a, 44, 60, 84, 0.6);
+    return;
+  }
+  const o = easeOutCubic((a - 0.38) / 0.52);
+  const kc = hslk(44, 66, Math.min(95, Lb + 6)), kr = hslk(44, 66, Lb);
+  if (o < 0.3) {
+    put(sx, sy - 1, C_HASH, kr, Z); put(sx - 1, sy, C_HASH, kr, Z); put(sx, sy, C_AT, kc, Z);
+    put(sx + 1, sy, C_HASH, kr, Z); put(sx, sy + 1, C_HASH, kr, Z);
+  } else {
+    const core = ['  ###  ', '##@@@##', '  ###  '];
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 7; c++) {
+        const ch = core[r][c];
+        if (ch === ' ') continue;
+        put(sx - 3 + c, sy - 1 + r, ch === '@' ? C_AT : C_HASH, ch === '@' ? kc : kr, Z);
+      }
+    }
+  }
+  for (let k = 0; k < 8; k++) {
+    const th = k * Math.PI / 4;
+    const len = (k % 2 === 0 ? 13 : 6.5) * o * breathe * (1 + 0.22 * glint);
+    const ux = Math.cos(th), uy = Math.sin(th);
+    let rc;
+    if (k % 4 === 0) rc = C_DASH;
+    else if (k % 4 === 2) rc = C_PIPE;
+    else rc = (ux * uy > 0) ? C_BS : C_SL;
+    const step = Math.abs(uy) > 0.9 ? 0.5 : 0.7;
+    for (let d = 2.6; d <= len; d += step) {
+      const x = sx + d * ux, y = sy + d * uy * AR;
+      const q = d / Math.max(len, 1);
+      const c = d > len - 1.1 ? (k % 2 ? C_COLON : C_DOT) : rc;
+      put(x, y, c, hslk(44, 66, Lb - q * 14, 1 - 0.45 * q), Z - 1 - q);
+    }
+  }
+  for (let k = 0; k < 8; k++) {
+    const th = (k + 0.5) * Math.PI / 4 + t * 0.25;
+    const len = (4.5 + (k % 2) * 2) * o;
+    const ux = Math.cos(th), uy = Math.sin(th);
+    for (let d = 2.8; d <= len; d += 1.3) {
+      put(sx + d * ux, sy + d * uy * AR, C_DOT, hslk(44, 60, 74, 0.7), Z - 3);
+    }
+  }
+  for (let k = 0; k < 16; k++) {
+    const th = t * 0.55 + k * TAU / 16;
+    const rr = 11 * o;
+    const tw = 0.6 + 0.4 * Math.sin(t * 3 + k * 1.7);
+    put(sx + rr * Math.cos(th), sy + rr * Math.sin(th) * AR, k % 2 ? C_PLUS : C_STAR,
+      hslk(pastelHue(k / 16 + t * 0.05), 70, 80, tw), Z - 2);
+  }
+  addHalo(sx, sy, (8 + 2 * o) * breathe + glint * 4, 44, 60, 82, 0.35 + 0.3 * o + 0.2 * glint);
+}
+
+function cometPos(c, p, out) {
+  const f = 1 - p * (1 + EXT);
+  const a = COMET_A0 + c * Math.PI - 4 * TAU * p;
+  const r = Wenv(f) * 1.1;
+  const phi = a + rot;
+  const z = r * Math.cos(phi);
+  const tl = f < 0 ? TILT + (GTILT - TILT) * clamp01(-f / EXT) : TILT;
+  out[0] = cx + r * Math.sin(phi);
+  out[1] = baseRow - f * treeH + z * tl;
+  out[2] = z;
+}
+const CP = new Float32Array(3);
+
+function drawComets(t) {
+  const p = (t - 5.95) / 3;
+  if (p < 0 || p > 1) return;
+  const headFade = Math.min(1, p / 0.02) * (p > 0.95 ? (1 - p) / 0.05 : 1);
+  const tailFade = p > 0.8 ? clamp01((0.96 - p) / 0.16) : 1;
+  for (let c = 0; c < 2; c++) {
+    if (tailFade > 0) {
+      for (let i = 1; i <= 110; i++) {
+        const pi = p - i * 0.0016;
+        if (pi < 0) break;
+        cometPos(c, pi, CP);
+        let x = CP[0], y = CP[1];
+        const z = CP[2];
+        const fr = i / 110;
+        if (fr > 0.4) {
+          const loose = (fr - 0.4) / 0.6;
+          y += loose * loose * 5 + (h32(i, c, 2) - 0.5) * loose * 1.6;
+          x += (h32(i, c, 1) - 0.5) * loose * 3.4;
+        }
+        const ch = fr < 0.18 ? C_HASH : fr < 0.42 ? C_STAR : fr < 0.72 ? C_PLUS : C_DOT;
+        const hue = rampHue(fr + t * 0.35 + c * 0.5);
+        const k = hslk(hue, 90, 82 - 26 * fr, (1 - fr * 0.78) * tailFade);
+        put(x, y, ch, k, z + 5);
+        if (i < 24) put(x, y + 0.9, ch, k, z + 4.9);
+      }
+    }
+    if (headFade <= 0) continue;
+    cometPos(c, p, CP);
+    const x = CP[0], y = CP[1], z = CP[2];
+    const hue = rampHue(t * 0.35 + c * 0.5);
+    const ks = hslk(hue, 100, 64, headFade);
+    put(x, y, C_AT, hslk(hue, 30, 98, headFade), z + 7);
+    put(x - 1, y, C_AT, ks, z + 6.5); put(x + 1, y, C_AT, ks, z + 6.5);
+    put(x, y - 1, C_AT, ks, z + 6.5); put(x, y + 1, C_AT, ks, z + 6.5);
+    const rl = 2 + (h32(Math.floor(t * 12), c, 3) > 0.5 ? 1 : 0);
+    const kr = hslk(hue, 80, 80, 0.8 * headFade);
+    for (let d = 2; d <= rl + 1; d++) { put(x - d, y, C_DASH, kr, z + 6); put(x + d, y, C_DASH, kr, z + 6); }
+    for (let d = 2; d <= rl; d++) { put(x, y - d, C_PIPE, kr, z + 6); put(x, y + d, C_PIPE, kr, z + 6); }
+    addHalo(x, y, 5.5, hue, 80, 80, 0.55 * headFade);
+  }
+}
+
+function drawDust(t) {
+  if (t < 3.1) return;
+  const fin = clamp01((t - 3.1) / 1.2);
+  for (let i = 0; i < DUSTN; i++) {
+    let q = DF0[i] + (t - 3.1) * DSP[i];
+    q -= Math.floor(q);
+    const f = q * 1.15 - 0.05;
+    const a = DA[i] + t * 0.35 + f * 2.5;
+    const r = Wenv(clamp01(f)) * 1.15 + DRO[i];
+    const x = cx + r * Math.sin(a), z = r * Math.cos(a);
+    const y = baseRow - f * treeH + z * TILT;
+    const edge = Math.min(1, q / 0.08, (1 - q) / 0.1);
+    const tw = 0.55 + 0.45 * Math.sin(t * 2.3 + DTW[i]);
+    put(x, y, DCH[i], hslk(DHU[i], 60, 80, 0.62 * tw * edge * fin), z);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* reindeer: 2D signed distance field                                  */
+/* ------------------------------------------------------------------ */
+
+const DE_ELL = new Float32Array(4 * 6);
+const DE_CN = new Float32Array(24 * 6), DE_CNK = new Float32Array(24);
+const DE_CF = new Float32Array(16 * 6);
+let deCN = 0, deCF = 0;
+const FRONT_KEYS = [[0.62, 0.78], [0.15, 0.05], [-0.45, -0.62], [0.28, -1.25]];
+const HIND_KEYS = [[0.42, 0.9], [-0.12, 0.32], [-0.72, -0.42], [-0.38, 1.15]];
+const LEGA = [0, 0];
+function legAng(keys, ph) {
+  ph -= Math.floor(ph);
+  const s = ph * 4, i = s | 0, fr = s - i;
+  const e = fr * fr * (3 - 2 * fr);
+  const A = keys[i], B = keys[(i + 1) % 4];
+  LEGA[0] = A[0] + (B[0] - A[0]) * e;
+  LEGA[1] = A[1] + (B[1] - A[1]) * e;
+}
+function setEll(i, x, y, rx, ry, ang) {
+  const o = i * 6;
+  DE_ELL[o] = x; DE_ELL[o + 1] = y; DE_ELL[o + 2] = rx; DE_ELL[o + 3] = ry; DE_ELL[o + 4] = Math.cos(ang); DE_ELL[o + 5] = Math.sin(ang);
+}
+function addCapN(ax, ay, bx, by, ra, rb, k) {
+  const o = deCN * 6;
+  DE_CN[o] = ax; DE_CN[o + 1] = ay; DE_CN[o + 2] = bx; DE_CN[o + 3] = by; DE_CN[o + 4] = ra; DE_CN[o + 5] = rb;
+  DE_CNK[deCN] = k;
+  deCN++;
+}
+function addCapF(ax, ay, bx, by, ra, rb) {
+  const o = deCF * 6;
+  DE_CF[o] = ax; DE_CF[o + 1] = ay; DE_CF[o + 2] = bx; DE_CF[o + 3] = by; DE_CF[o + 4] = ra; DE_CF[o + 5] = rb;
+  deCF++;
+}
+const RP = [0, 0];
+function rotP(x, y, px, py, a) {
+  const c = Math.cos(a), s = Math.sin(a), dx = x - px, dy = y - py;
+  RP[0] = px + dx * c - dy * s;
+  RP[1] = py + dx * s + dy * c;
+}
+function leg(jx, jy, keys, ph, lu, ll, ru0, ru1, rl0, rl1, far) {
+  legAng(keys, ph);
+  const kx = jx + lu * Math.sin(LEGA[0]), ky = jy + lu * Math.cos(LEGA[0]);
+  const fx = kx + ll * Math.sin(LEGA[1]), fy = ky + ll * Math.cos(LEGA[1]);
+  if (far) { addCapF(jx, jy, kx, ky, ru0, ru1); addCapF(kx, ky, fx, fy, rl0, rl1); }
+  else { addCapN(jx, jy, kx, ky, ru0, ru1, 0.9); addCapN(kx, ky, fx, fy, rl0, rl1, 0.5); }
+}
+function antler(ox, oy, px, py, nod, far, v) {
+  const pts = [
+    [13.0, -12.0, 11.2, -16.0, 0.85, 0.7],
+    [11.2, -16.0, 8.0, -19.6 - v, 0.7, 0.64],
+    [8.0, -19.6 - v, 5.4, -21.0 - v, 0.64, 0.6],
+    [12.5, -13.5, 15.8 + v, -15.4, 0.68, 0.6],
+    [11.2, -16.0, 14.2 + v, -19.6, 0.66, 0.6],
+    [9.3, -18.5, 10.8 + v, -22.4 - v, 0.64, 0.6]
+  ];
+  for (let i = 0; i < pts.length; i++) {
+    const q = pts[i];
+    rotP(q[0] + ox, q[1] + oy, px, py, nod);
+    const ax = RP[0], ay = RP[1];
+    rotP(q[2] + ox, q[3] + oy, px, py, nod);
+    if (far) addCapF(ax, ay, RP[0], RP[1], q[4], q[5]);
+    else addCapN(ax, ay, RP[0], RP[1], q[4], q[5], 0);
+  }
+}
+function buildDeer(td) {
+  const ph = td * 1.05;
+  const w4 = ph * 2 * TAU;
+  const bob = -0.6 * Math.sin(w4);
+  const nod = 0.07 * Math.sin(w4 + 0.9);
+  const tsw = 0.22 * Math.sin(w4 + 2.0);
+  deCN = 0; deCF = 0;
+  setEll(0, 5.5, 0.0 + bob, 5.6, 4.6, -0.25);
+  setEll(1, -0.6, 0.3 + bob, 6.6, 3.2, 0.0);
+  setEll(2, -7.8, -0.8 + bob, 4.6, 4.0, 0.3);
+  const px = 8.4, py = -3.4 + bob;
+  rotP(13.8, -10.2 + bob, px, py, nod);
+  setEll(3, RP[0], RP[1], 3.0, 2.0, 0.45 + nod);
+  const neck = [[8.0, -2.5, 10.8, -7.0, 2.6, 2.0], [10.8, -7.0, 12.2, -9.6, 2.0, 1.7]];
+  for (let i = 0; i < 2; i++) {
+    const q = neck[i];
+    rotP(q[0], q[1] + bob, px, py, nod * (i ? 1 : 0.4));
+    const ax = RP[0], ay = RP[1];
+    rotP(q[2], q[3] + bob, px, py, nod);
+    addCapN(ax, ay, RP[0], RP[1], q[4], q[5], 1.6);
+  }
+  rotP(15.3, -9.2 + bob, px, py, nod);
+  let ax = RP[0], ay = RP[1];
+  rotP(17.6, -7.9 + bob, px, py, nod);
+  addCapN(ax, ay, RP[0], RP[1], 1.35, 0.85, 0.9);
+  rotP(12.3, -11.6 + bob, px, py, nod);
+  ax = RP[0]; ay = RP[1];
+  rotP(9.8, -13.0 + bob, px, py, nod);
+  addCapN(ax, ay, RP[0], RP[1], 0.9, 0.6, 0.4);
+  const tx = -12.3, ty = -2.6 + bob;
+  rotP(-14.8, -5.6 + bob, tx, ty, tsw);
+  addCapN(tx, ty, RP[0], RP[1], 1.2, 0.65, 0.9);
+  antler(0, bob, px, py, nod, false, 0);
+  antler(1.6, bob - 0.6, px, py, nod, true, 0.5);
+  leg(6.0, 2.6 + bob, FRONT_KEYS, ph, 5.4, 5.8, 1.4, 0.9, 0.8, 0.62, false);
+  leg(-7.8, 1.8 + bob, HIND_KEYS, ph + 0.5, 6.2, 6.0, 1.8, 0.9, 0.8, 0.62, false);
+  leg(6.9, 2.3 + bob, FRONT_KEYS, ph + 0.5, 5.4, 5.8, 1.3, 0.85, 0.75, 0.6, true);
+  leg(-7.0, 1.5 + bob, HIND_KEYS, ph, 6.2, 6.0, 1.6, 0.85, 0.75, 0.6, true);
+}
+function sdCap(px, py, A, o) {
+  const ax = A[o], ay = A[o + 1];
+  const bax = A[o + 2] - ax, bay = A[o + 3] - ay, pax = px - ax, pay = py - ay;
+  let h = (pax * bax + pay * bay) / (bax * bax + bay * bay + 1e-9);
+  h = h < 0 ? 0 : h > 1 ? 1 : h;
+  const qx = pax - bax * h, qy = pay - bay * h;
+  return Math.sqrt(qx * qx + qy * qy) - (A[o + 4] + (A[o + 5] - A[o + 4]) * h);
+}
+function sdEll(px, py, i) {
+  const o = i * 6;
+  const dx = px - DE_ELL[o], dy = py - DE_ELL[o + 1];
+  const c = DE_ELL[o + 4], s = DE_ELL[o + 5];
+  const lx = (dx * c + dy * s) / DE_ELL[o + 2], ly = (-dx * s + dy * c) / DE_ELL[o + 3];
+  return (Math.sqrt(lx * lx + ly * ly) - 1) * Math.min(DE_ELL[o + 2], DE_ELL[o + 3]);
+}
+function smin(a, b, k) {
+  if (k <= 0) return a < b ? a : b;
+  const h = Math.max(k - Math.abs(a - b), 0) / k;
+  return Math.min(a, b) - h * h * k * 0.25;
+}
+function sdfNear(px, py) {
+  let d = sdEll(px, py, 0);
+  d = smin(d, sdEll(px, py, 1), 2.2);
+  d = smin(d, sdEll(px, py, 2), 2.2);
+  for (let i = 0; i < deCN; i++) {
+    d = smin(d, sdCap(px, py, DE_CN, i * 6), DE_CNK[i]);
+    if (i === 1) d = smin(d, sdEll(px, py, 3), 1.2);
+  }
+  return d;
+}
+function sdfFar(px, py) {
+  let d = 1e9;
+  for (let i = 0; i < deCF; i++) {
+    const v = sdCap(px, py, DE_CF, i * 6);
+    if (v < d) d = v;
+  }
+  return d;
+}
+const DBUF_N = new Float32Array(12000), DBUF_F = new Float32Array(12000);
+let deerOn = false, dX = 0, dY = 0, dS = 1, dix0 = 0, diy0 = 0, dW = 0, dH = 0;
+function prepDeer(t) {
+  deerOn = t >= 10.55;
+  if (!deerOn) return;
+  const td = t - 10.55;
+  const e = clamp01(td / 1.4);
+  dS = Math.max(0.03, easeOutBack(e, 1.6));
+  const pe = easeOutCubic(e);
+  const x0 = cx, y0 = baseRow - 0.42 * treeH;
+  const x1 = cx - 1, y1 = baseRow - 0.2 * treeH;
+  dX = x0 + (x1 - x0) * pe;
+  dY = y0 + (y1 - y0) * pe;
+  buildDeer(td + 0.6);
+  const m = 7;
+  dix0 = Math.max(0, Math.floor(dX - 17 * dS - m));
+  const ix1 = Math.min(cols - 1, Math.floor(dX + 19 * dS + m));
+  diy0 = Math.max(0, Math.floor(dY + (-21.5 * dS - m) * AR));
+  const iy1 = Math.min(rows - 1, Math.floor(dY + (15 * dS + m) * AR));
+  dW = ix1 - dix0 + 1;
+  dH = iy1 - diy0 + 1;
+  if (dW * dH > DBUF_N.length) dH = Math.floor(DBUF_N.length / dW);
+  for (let jy = 0; jy < dH; jy++) {
+    const iy = diy0 + jy;
+    const ly = ((iy + 0.5 - dY) / AR) / dS;
+    for (let jx = 0; jx < dW; jx++) {
+      const ix = dix0 + jx;
+      const lx = (ix + 0.5 - dX) / dS;
+      const dn = sdfNear(lx, ly) * dS, dfv = sdfFar(lx, ly) * dS;
+      DBUF_N[jy * dW + jx] = dn;
+      DBUF_F[jy * dW + jx] = dfv;
+      const dd = Math.min(dn, dfv);
+      const v = dd < 5 ? 0.25 : dd < 6.5 ? 0.25 + 0.75 * (dd - 5) / 1.5 : 1;
+      const i = iy * cols + ix;
+      if (v < dim[i]) dim[i] = v;
+    }
+  }
+}
+function drawDeer() {
+  if (!deerOn) return;
+  const Z = 900;
+  for (let jy = 0; jy < dH; jy++) {
+    const iy = diy0 + jy;
+    for (let jx = 0; jx < dW; jx++) {
+      const ix = dix0 + jx;
+      const dn = DBUF_N[jy * dW + jx], dfv = DBUF_F[jy * dW + jx];
+      if (dn < 0.3) {
+        if (dn > -1.45) {
+          const h = h32(ix, iy, 61);
+          put(ix + 0.5, iy + 0.5, h < 0.7 ? C_AT : h < 0.95 ? C_HASH : C_8, hslk(210, 25, 97), Z);
+        } else {
+          const h = h32(ix, iy, hf);
+          if (h < 0.34) {
+            const h2 = h32(ix, iy, hf + 7);
+            const ch = h2 < 0.3 ? C_PLUS : h2 < 0.55 ? C_STAR : h2 < 0.75 ? C_x : C_COLON;
+            put(ix + 0.5, iy + 0.5, ch, hslk(208, 60, 86, 0.6 + 0.35 * h2), Z);
+          }
+        }
+      } else if (dfv < 0.3) {
+        if (dfv > -1.45) {
+          const h = h32(ix, iy, 67);
+          put(ix + 0.5, iy + 0.5, h < 0.6 ? C_AT : C_HASH, hslk(212, 22, 80), Z - 1);
+        } else if (h32(ix, iy, hf + 3) < 0.2) {
+          put(ix + 0.5, iy + 0.5, C_COLON, hslk(210, 40, 76, 0.6), Z - 1);
+        }
+      }
+    }
+  }
+}
+
+function sparklePass(t) {
+  const sf = Math.floor(t * 10);
+  for (let i = 0; i < NCELL; i++) {
+    if (tag[i] === 1 && h32(i, sf, 77) < 0.0012) {
+      chr[i] = C_STAR;
+      clr[i] = hslk(0, 0, 98);
+    }
+  }
+}
+
+function drawScene(t) {
+  rot = t * 0.5;
+  cR = Math.cos(rot); sR = Math.sin(rot);
+  gF = clamp01((t - 1.8) / 4.35);
+  F = easeIO(gF) * 1.12;
+  prepDeer(t);
+  drawDisc(t);
+  drawFallingLight(t);
+  drawTrunk(t);
+  drawTree(t);
+  drawBaubles(t);
+  drawLights(t);
+  drawGifts(t);
+  drawRing(t);
+  drawComets(t);
+  drawStar(t);
+  drawDust(t);
+  drawDeer();
+  if (t > 6.2) sparklePass(t);
+}
+
+/* ------------------------------------------------------------------ */
+/* rendering                                                           */
+/* ------------------------------------------------------------------ */
+
+function render() {
+  let n = 0;
+  const N = NCELL;
+  for (let i = 0; i < N; i++) {
+    if (chr[i]) sortBuf[n++] = clr[i] * N + i;
+  }
+  const sb = sortBuf.subarray(0, n);
+  sb.sort();
+  octx.setTransform(1, 0, 0, 1, 0, 0);
+  octx.globalCompositeOperation = 'source-over';
+  octx.globalAlpha = 1;
+  octx.clearRect(0, 0, off.width, off.height);
+  octx.font = FONT;
+  octx.textAlign = 'center';
+  octx.textBaseline = 'middle';
+  let last = -1;
+  for (let j = 0; j < n; j++) {
+    const v = sb[j];
+    const k = Math.floor(v / N);
+    const i = v - k * N;
+    if (k !== last) { octx.fillStyle = palStr(k); last = k; }
+    const iy = (i / cols) | 0;
+    octx.fillText(CHS[chr[i]], XP[i - iy * cols], YP[iy]);
+  }
+  mctx.setTransform(1, 0, 0, 1, 0, 0);
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.globalAlpha = 1;
+  mctx.drawImage(bgc, 0, 0);
+  mctx.drawImage(off, 0, 0);
+
+  actx.setTransform(1, 0, 0, 1, 0, 0);
+  actx.clearRect(0, 0, bloomA.width, bloomA.height);
+  if (FILTER_OK) actx.filter = 'blur(' + (0.006 * PW * DPR * 0.5).toFixed(2) + 'px)';
+  actx.drawImage(off, 0, 0, bloomA.width, bloomA.height);
+  if (FILTER_OK) actx.filter = 'none';
+
+  bctx.setTransform(1, 0, 0, 1, 0, 0);
+  bctx.clearRect(0, 0, bloomB.width, bloomB.height);
+  if (FILTER_OK) bctx.filter = 'blur(' + (0.02 * PW * DPR * 0.25).toFixed(2) + 'px)';
+  bctx.drawImage(off, 0, 0, bloomB.width, bloomB.height);
+  if (FILTER_OK) bctx.filter = 'none';
+
+  mctx.globalCompositeOperation = 'screen';
+  mctx.globalAlpha = 0.4;
+  mctx.drawImage(bloomA, 0, 0, cv.width, cv.height);
+  mctx.globalAlpha = 0.12;
+  mctx.drawImage(bloomB, 0, 0, cv.width, cv.height);
+  mctx.globalAlpha = 1;
+  mctx.globalCompositeOperation = 'source-over';
+}
+
+/* ------------------------------------------------------------------ */
+/* sound                                                               */
+/* ------------------------------------------------------------------ */
+
+let AC = null, BUS = null, NOISE = null;
+const DEG = [0, 2, 4, 7, 9];
+function NOTE(i) {
+  const o = Math.floor(i / 5);
+  const d = DEG[((i % 5) + 5) % 5];
+  return 523.25 * Math.pow(2, (d + 12 * o) / 12);
+}
+function initAudio() {
+  try {
+    if (!AC) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return;
+      AC = new Ctor();
+      const sr = AC.sampleRate;
+      NOISE = AC.createBuffer(1, Math.floor(sr * 2), sr);
+      const nd = NOISE.getChannelData(0);
+      for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+      const len = Math.floor(sr * 2.4);
+      const ir = AC.createBuffer(2, len, sr);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch);
+        for (let i = 0; i < len; i++) { const q = 1 - i / len; d[i] = (Math.random() * 2 - 1) * q * q * q; }
+      }
+      BUS = AC.createGain();
+      const dry = AC.createGain(); dry.gain.value = 0.85;
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.32;
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.ratio.value = 4;
+      const master = AC.createGain(); master.gain.value = 1.3;
+      BUS.connect(dry); dry.connect(comp);
+      BUS.connect(conv); conv.connect(wet); wet.connect(comp);
+      comp.connect(master); master.connect(AC.destination);
+    }
+    if (AC.state !== 'running') AC.resume();
+  } catch (e) { AC = null; }
+}
+function audioOK() { return !!AC && AC.state === 'running'; }
+function outNode(pan) {
+  if (!pan || !AC.createStereoPanner) return BUS;
+  const p = AC.createStereoPanner();
+  p.pan.value = Math.max(-1, Math.min(1, pan));
+  p.connect(BUS);
+  return p;
+}
+function bell(freq, at, vol, decay, pan) {
+  decay = decay || 1.4;
+  const out = outNode(pan);
+  const parts = [1, 2.76, 5.4], lv = [1, 0.2, 0.07];
+  for (let i = 0; i < 3; i++) {
+    const f = freq * parts[i];
+    if (f > 18000) continue;
+    const o = AC.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f, at);
+    const g = AC.createGain();
+    const dk = decay / (1 + i * 0.9);
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(vol * lv[i], at + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.004 + dk);
+    o.connect(g); g.connect(out);
+    o.start(at); o.stop(at + 0.004 + dk + 0.05);
+  }
+}
+function noiseBurst(at, dur, f0, f1, q, vol, attack, pan) {
+  const src = AC.createBufferSource();
+  src.buffer = NOISE; src.loop = true;
+  const bq = AC.createBiquadFilter();
+  bq.type = 'bandpass'; bq.Q.setValueAtTime(q, at);
+  bq.frequency.setValueAtTime(f0, at);
+  bq.frequency.exponentialRampToValueAtTime(f1, at + dur);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(vol, at + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  src.connect(bq); bq.connect(g); g.connect(outNode(pan));
+  src.start(at, Math.random() * 1.5);
+  src.stop(at + dur + 0.05);
+}
+function glide(type, f0, f1, at, dur, vol, attack, pan) {
+  const o = AC.createOscillator();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, at);
+  o.frequency.exponentialRampToValueAtTime(f1, at + dur);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(vol, at + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g); g.connect(outNode(pan));
+  o.start(at); o.stop(at + dur + 0.05);
+}
+function pad(freq, at, vol, attack, dur) {
+  const o = AC.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(freq, at);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(vol, at + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g); g.connect(BUS);
+  o.start(at); o.stop(at + dur + 0.05);
+}
+function leafBed(at, dur, fc, fmin, fmax, vol, q) {
+  const src = AC.createBufferSource();
+  src.buffer = NOISE; src.loop = true;
+  const bq = AC.createBiquadFilter();
+  bq.type = 'bandpass'; bq.Q.setValueAtTime(q, at);
+  bq.frequency.setValueAtTime(fc, at);
+  for (let tt = 0.35; tt < dur; tt += 0.35) bq.frequency.linearRampToValueAtTime(fmin + Math.random() * (fmax - fmin), at + tt);
+  const fl = AC.createGain();
+  fl.gain.setValueAtTime(0, at);
+  for (let tt = 0.03; tt < dur; tt += 0.025 + Math.random() * 0.06) fl.gain.linearRampToValueAtTime(0.15 + Math.random() * 0.85, at + tt);
+  const sw = AC.createGain();
+  sw.gain.setValueAtTime(0, at);
+  sw.gain.linearRampToValueAtTime(vol * 0.5, at + 0.8);
+  sw.gain.linearRampToValueAtTime(vol, at + 1.6);
+  sw.gain.linearRampToValueAtTime(vol * 0.8, at + dur - 1.0);
+  sw.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  src.connect(bq); bq.connect(fl); fl.connect(sw); sw.connect(BUS);
+  src.start(at, Math.random());
+  src.stop(at + dur + 0.05);
+}
+
+const CUES = [
+  [0.05, function () {
+    const n = AC.currentTime + 0.005;
+    glide('sine', 2400, 620, n, 0.34, 0.1, 0.01, 0);
+    bell(NOTE(12), n, 0.09, 1.2, 0);
+  }],
+  [0.39, function () {
+    const n = AC.currentTime + 0.005;
+    glide('sine', 120, 44, n, 0.55, 0.55, 0.006, 0);
+    noiseBurst(n, 1.2, 280, 2600, 1.1, 0.1, 0.3, 0);
+    bell(NOTE(-5), n + 0.02, 0.22, 3.2, -0.2);
+    bell(NOTE(-3), n + 0.05, 0.18, 3.2, 0.2);
+    bell(NOTE(7), n + 0.25, 0.08, 0.9, -0.4);
+    bell(NOTE(8), n + 0.38, 0.08, 0.9, 0);
+    bell(NOTE(9), n + 0.51, 0.08, 0.9, 0.4);
+  }],
+  [1.05, function () {
+    const n = AC.currentTime + 0.005;
+    for (let k = 0; k < 6; k++) {
+      const at = n + k * 0.075;
+      glide('triangle', 210 * Math.pow(1.13, k), 150 * Math.pow(1.13, k), at, 0.07, 0.22, 0.003, (k - 2.5) * 0.08);
+      noiseBurst(at, 0.025, 2200, 2000, 3, 0.07, 0.002, 0);
+    }
+  }],
+  [1.2, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 0.6, 400, 3200, 2.2, 0.09, 0.35, 0);
+    glide('sine', 330, 990, n, 0.6, 0.05, 0.2, 0);
+    bell(NOTE(9), n + 0.6, 0.12, 1.6, 0);
+  }],
+  [1.8, function () {
+    const n = AC.currentTime + 0.01;
+    leafBed(n, 3.6, 3200, 2600, 3800, 0.045, 1.0);
+    leafBed(n, 3.6, 6200, 5900, 6500, 0.026, 1.4);
+  }],
+  [5.27, function () {
+    const n = AC.currentTime + 0.005;
+    for (let k = 0; k < 5; k++) bell(NOTE(8 + k), n + k * 0.065, 0.07, 0.8, (k - 2) * 0.2);
+    const ch = [5, 7, 8, 10], pn = [-0.7, 0.7, -0.35, 0.35];
+    for (let k = 0; k < 4; k++) bell(NOTE(ch[k]), n + 0.38 + k * 0.012, 0.11, 2.8, pn[k]);
+    noiseBurst(n + 0.38, 1.4, 7500, 9000, 1.0, 0.035, 0.25, 0);
+  }],
+  [5.95, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 1.1, 3800, 500, 1.4, 0.08, 0.15, 0);
+    for (let i = 0; i < 24; i++) bell(NOTE(Math.round(13 - i * 0.7)), n + i * 3 / 24, 0.075, 1.1, i % 2 ? 0.9 : -0.9);
+  }],
+  [8.95, function () {
+    const n = AC.currentTime + 0.005;
+    const ch = [-5, -3, -2, 0];
+    for (let k = 0; k < 4; k++) pad(NOTE(ch[k]), n, 0.06, 0.5, 3.0);
+    bell(NOTE(5), n, 0.12, 2.2, 0);
+  }],
+  [10.55, function () {
+    const n = AC.currentTime + 0.005;
+    for (let k = 0; k < 7; k++) bell(NOTE(5 + k), n + k * 0.075, 0.09, 1.0, -0.8 + k * 0.267);
+    const fr = [2900, 2935, 3480, 3525];
+    for (let j = 0; j < 8; j++) {
+      const at = n + 0.6 + j * 0.17;
+      const v = 0.09 * (1 - j * 0.1);
+      noiseBurst(at, 0.07, 6000, 6000, 2, v * 0.8, 0.003, 0);
+      for (let k = 0; k < 4; k++) bell(fr[k] * (1 + (Math.random() - 0.5) * 0.01), at + k * 0.006, v * 0.35, 0.28, (Math.random() - 0.5) * 0.6);
+    }
+  }]
+];
+for (let i = 0; i < 5; i++) {
+  CUES.push([9.05 + 0.26 * i, function () {
+    const n = AC.currentTime + 0.005;
+    const f0 = 260 * (1 + i * 0.12);
+    glide('sine', f0, f0 * 3.2, n, 0.075, 0.18, 0.004, (i - 2) * 0.3);
+    noiseBurst(n, 0.03, 2600, 2400, 2.5, 0.06, 0.003, 0);
+    bell(NOTE(5 + i), n + 0.07, 0.11, 1.3, (i - 2) * 0.3);
+  }]);
+}
+CUES.sort(function (a, b) { return a[0] - b[0]; });
+
+let lastStep = 0, lastStep2 = 0;
+function runAudio(prevT, t) {
+  for (let c = 0; c < CUES.length; c++) {
+    const ct = CUES[c][0];
+    if (prevT < ct && t >= ct) {
+      if (audioOK()) { try { CUES[c][1](); } catch (e) { } }
+    }
+  }
+  if (t >= 1.8 && t <= 5.4) {
+    const Fn = Fof(t);
+    const st = Math.min(40, Math.floor(Fn * 40));
+    const st2 = Math.min(100, Math.floor(Fn * 90));
+    if (audioOK()) {
+      const n = AC.currentTime + 0.005;
+      while (lastStep < st) {
+        lastStep++;
+        if (Math.random() < 0.75) bell(NOTE(8 + Math.floor(Math.random() * 7)), n, 0.035, 0.9, Math.random() * 1.6 - 0.8);
+      }
+      while (lastStep2 < st2) {
+        lastStep2++;
+        if (Math.random() < 0.55) {
+          const f = 2400 + Math.random() * 2800;
+          noiseBurst(n + Math.random() * 0.03, 0.04 + Math.random() * 0.05, f, f * 0.92, 4, 0.022, 0.008, Math.random() * 1.4 - 0.7);
+        }
+      }
+    } else {
+      lastStep = st; lastStep2 = st2;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* clock, state and input                                              */
+/* ------------------------------------------------------------------ */
+
+let state = 'start';
+let paused = false, pauseAt = 0, pausedTotal = 0;
+const T0 = performance.now();
+let filmStart = 0, prevT = -1;
+function gnow() { return ((paused ? pauseAt : performance.now()) - T0 - pausedTotal) / 1000; }
+function filmT() { return gnow() - filmStart; }
+
+function startFilm() {
+  initAudio();
+  if (paused) togglePause();
+  state = 'play';
+  filmStart = gnow();
+  prevT = -0.001;
+  lastStep = 0; lastStep2 = 0;
+  cv.style.cursor = 'none';
+  dirty = true;
+}
+function togglePause() {
+  const now = performance.now();
+  if (paused) {
+    pausedTotal += now - pauseAt;
+    paused = false;
+    if (AC && AC.state === 'suspended') AC.resume();
+  } else {
+    pauseAt = now;
+    paused = true;
+    if (AC && AC.state === 'running') AC.suspend();
+  }
+  dirty = true;
+}
+window.addEventListener('click', function () {
+  if (state === 'start') startFilm();
+  else if (filmT() >= FILM_END) startFilm();
+});
+window.addEventListener('keydown', function (e) {
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();
+    if (state === 'start') startFilm();
+    else togglePause();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (state === 'start' || filmT() >= FILM_END) startFilm();
+  } else if (e.key === 'r' || e.key === 'R') {
+    if (state === 'play') startFilm();
+  }
+});
+window.addEventListener('resize', layout);
+
+function frame() {
+  requestAnimationFrame(frame);
+  if (paused && !dirty) return;
+  dirty = false;
+  const g = gnow();
+  hf = Math.floor(g * 9);
+  haloN = 0;
+  clearGrid();
+  drawSnow(g);
+  if (state === 'start') {
+    drawPlay(g);
+  } else {
+    const t = g - filmStart;
+    drawScene(t);
+    if (!paused) runAudio(prevT, t);
+    prevT = t;
+  }
+  applyHalos(hf);
+  render();
+}
+
+layout();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

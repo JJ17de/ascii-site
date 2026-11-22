@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>ASCII Dunk</title>
+<link rel="icon" href="data:,">
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#666e7d;}
+canvas{display:block;position:fixed;left:0;top:0;touch-action:none;-webkit-tap-highlight-color:transparent;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function () {
+'use strict';
+
+/* ------------------------------------------------------------------ */
+/* constants and small helpers                                         */
+/* ------------------------------------------------------------------ */
+
+const TAU = Math.PI * 2;
+const NC = 124;
+const FILM_END = 12;
+
+function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+function sstep(a, b, x) { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }
+function easeIO(x) {
+  x = clamp01(x);
+  return x < 0.5 ? 0.5 * Math.pow(2 * x, 1.5) : 1 - 0.5 * Math.pow(2 - 2 * x, 1.5);
+}
+function easeOutCubic(x) { x = clamp01(x); const k = 1 - x; return 1 - k * k * k; }
+function easeOutBack(x, s) {
+  x = clamp01(x);
+  const c1 = s === undefined ? 1.70158 : s;
+  const c3 = c1 + 1;
+  const k = x - 1;
+  return 1 + c3 * k * k * k + c1 * k * k;
+}
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function h32(a, b, c) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul((b | 0) + 0x632be5ab, 0x165667b1) ^ Math.imul((c | 0) + 0x5bd1e995, 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function code(s) { return s.charCodeAt(0); }
+
+/* rainbow ramp for lights: pink -> violet -> blue -> cyan -> mint -> pale yellow -> gold and back */
+const RAMP = [318, 282, 228, 190, 150, 56, 38, 56, 150, 190, 228, 282];
+function rampHue(u) {
+  u -= Math.floor(u);
+  const s = u * 12, i = s | 0, f = s - i;
+  const a = RAMP[i], b = RAMP[(i + 1) % 12];
+  return a + (b - a) * f;
+}
+function pastelHue(u) { return rampHue(u); }
+
+/* colour keys: 5 bits per channel + 4 bits alpha, cached as strings */
+const RGB = new Float32Array(3);
+function hslRGB(h, s, l) {
+  h -= 360 * Math.floor(h / 360);
+  s = s < 0 ? 0 : s > 1 ? 1 : s;
+  l = l < 0 ? 0 : l > 1 ? 1 : l;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = h / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if (hp < 1) { r = c; g = x; b = 0; }
+  else if (hp < 2) { r = x; g = c; b = 0; }
+  else if (hp < 3) { r = 0; g = c; b = x; }
+  else if (hp < 4) { r = 0; g = x; b = c; }
+  else if (hp < 5) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  RGB[0] = (r + m) * 255; RGB[1] = (g + m) * 255; RGB[2] = (b + m) * 255;
+}
+function rgbk(r, g, b, a) {
+  let ai = (a * 15 + 0.5) | 0;
+  if (ai <= 0) return -1;
+  if (ai > 15) ai = 15;
+  r = r < 0 ? 0 : r > 255 ? 255 : r;
+  g = g < 0 ? 0 : g > 255 ? 255 : g;
+  b = b < 0 ? 0 : b > 255 ? 255 : b;
+  return (((r * 0.12157 + 0.5) | 0) << 14) | (((g * 0.12157 + 0.5) | 0) << 9) | (((b * 0.12157 + 0.5) | 0) << 4) | ai;
+}
+function hslk(h, s, l, a) {
+  hslRGB(h, s * 0.01, l * 0.01);
+  return rgbk(RGB[0], RGB[1], RGB[2], a === undefined ? 1 : a);
+}
+const PAL = new Array(1 << 19);
+function palStr(k) {
+  let s = PAL[k];
+  if (s === undefined) {
+    const r = Math.round(((k >> 14) & 31) * 255 / 31);
+    const g = Math.round(((k >> 9) & 31) * 255 / 31);
+    const b = Math.round(((k >> 4) & 31) * 255 / 31);
+    const a = (k & 15) / 15;
+    s = a >= 1 ? 'rgb(' + r + ',' + g + ',' + b + ')' : 'rgba(' + r + ',' + g + ',' + b + ',' + a.toFixed(3) + ')';
+    PAL[k] = s;
+  }
+  return s;
+}
+const CHS = [];
+for (let i = 0; i < 128; i++) CHS.push(String.fromCharCode(i));
+
+const C_AT = code('@'), C_HASH = code('#'), C_PLUS = code('+'), C_COLON = code(':'), C_DOT = code('.');
+const C_STAR = code('*'), C_PIPE = code('|'), C_DASH = code('-'), C_EQ = code('='), C_SL = code('/'), C_BS = code('\\');
+const C_O = code('O'), C_o = code('o'), C_0 = code('0'), C_8 = code('8'), C_AMP = code('&'), C_PCT = code('%'), C_x = code('x');
+const TREE_G = [C_8, C_AMP, C_PCT, C_HASH, C_AT];
+
+/* ------------------------------------------------------------------ */
+/* canvas, grid and layout                                             */
+/* ------------------------------------------------------------------ */
+
+const cv = document.getElementById('c');
+const mctx = cv.getContext('2d', { alpha: false });
+const off = document.createElement('canvas');
+const octx = off.getContext('2d');
+const bloomA = document.createElement('canvas');
+const actx = bloomA.getContext('2d');
+const bloomB = document.createElement('canvas');
+const bctx = bloomB.getContext('2d');
+const bgc = document.createElement('canvas');
+const bgctx = bgc.getContext('2d');
+const FILTER_OK = typeof actx.filter === 'string';
+
+let W = 0, H = 0, DPR = 1, PW = 0, CW = 0, CH = 0, AR = 1 / 1.62;
+let cols = 0, rows = 0, gridX0 = 0, gridY0 = 0, colOff = 0, cx = 62;
+let floorRow = 0, baseRow = 0, tipRow = 0, starRow = 0, treeH = 1, TILT = 0, GTILT = 0;
+let NCELL = 0, chr = null, clr = null, dep = null, tag = null, dim = null, sortBuf = null;
+let XP = null, YP = null, FONT = '';
+let dirty = true;
+
+function layout() {
+  W = Math.max(1, window.innerWidth);
+  H = Math.max(1, window.innerHeight);
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  PW = Math.min(W, H * 9 / 16);
+  CW = PW / NC;
+  CH = CW * 1.62;
+  AR = CW / CH;
+  rows = Math.max(24, Math.floor(H / CH));
+  const stageLeft = (W - PW) / 2;
+  colOff = Math.max(0, Math.ceil(stageLeft / CW));
+  cols = colOff * 2 + NC;
+  gridX0 = stageLeft - colOff * CW;
+  gridY0 = (H - rows * CH) / 2;
+  cx = colOff + NC / 2;
+  floorRow = rows * 0.845;
+  baseRow = rows * 0.698;
+  tipRow = rows * 0.273;
+  starRow = tipRow - 2;
+  treeH = baseRow - tipRow;
+  TILT = 0.17 * AR;
+  GTILT = 0.28 * AR;
+
+  NCELL = cols * rows;
+  chr = new Uint8Array(NCELL);
+  clr = new Int32Array(NCELL);
+  dep = new Float32Array(NCELL);
+  tag = new Uint8Array(NCELL);
+  dim = new Float32Array(NCELL);
+  sortBuf = new Float64Array(NCELL);
+
+  cv.width = Math.max(1, Math.round(W * DPR));
+  cv.height = Math.max(1, Math.round(H * DPR));
+  cv.style.width = W + 'px';
+  cv.style.height = H + 'px';
+  off.width = cv.width; off.height = cv.height;
+  bloomA.width = Math.max(1, cv.width >> 1); bloomA.height = Math.max(1, cv.height >> 1);
+  bloomB.width = Math.max(1, cv.width >> 2); bloomB.height = Math.max(1, cv.height >> 2);
+  bgc.width = cv.width; bgc.height = cv.height;
+  const gr = bgctx.createLinearGradient(0, 0, 0, bgc.height);
+  gr.addColorStop(0, '#323a47');
+  gr.addColorStop(0.55, '#394250');
+  gr.addColorStop(0.86, '#4b5463');
+  gr.addColorStop(1, '#666e7d');
+  bgctx.fillStyle = gr;
+  bgctx.fillRect(0, 0, bgc.width, bgc.height);
+
+  XP = new Float32Array(cols);
+  YP = new Float32Array(rows);
+  for (let i = 0; i < cols; i++) XP[i] = (gridX0 + (i + 0.5) * CW) * DPR;
+  for (let j = 0; j < rows; j++) YP[j] = (gridY0 + (j + 0.5) * CH) * DPR + CH * DPR * 0.04;
+  FONT = 'bold ' + (0.95 * CH * DPR).toFixed(2) + 'px Menlo, Consolas, "DejaVu Sans Mono", monospace';
+  dirty = true;
+}
+
+function clearGrid() {
+  chr.fill(0);
+  dep.fill(-1e9);
+  tag.fill(0);
+  dim.fill(1);
+}
+
+function put(x, y, c, k, z) {
+  if (k < 0) return;
+  const ix = Math.floor(x), iy = Math.floor(y);
+  if (ix < 0 || iy < 0 || ix >= cols || iy >= rows) return;
+  const i = iy * cols + ix;
+  if (z >= dep[i]) { dep[i] = z; chr[i] = c; clr[i] = k; tag[i] = 0; }
+}
+
+/* halos: + : . sprinkled into empty cells around bright sources */
+const HMAX = 700;
+const HX = new Float32Array(HMAX), HY = new Float32Array(HMAX), HRAD = new Float32Array(HMAX);
+const HHU = new Float32Array(HMAX), HSA = new Float32Array(HMAX), HLI = new Float32Array(HMAX), HST = new Float32Array(HMAX);
+let haloN = 0;
+function addHalo(x, y, rad, h, s, l, st) {
+  if (haloN >= HMAX) return;
+  HX[haloN] = x; HY[haloN] = y; HRAD[haloN] = rad; HHU[haloN] = h; HSA[haloN] = s; HLI[haloN] = l; HST[haloN] = st;
+  haloN++;
+}
+function applyHalos(hf) {
+  for (let n = 0; n < haloN; n++) {
+    const x = HX[n], y = HY[n], R = HRAD[n], st = HST[n];
+    const ry = R * AR;
+    const x0 = Math.max(0, Math.floor(x - R)), x1 = Math.min(cols - 1, Math.floor(x + R));
+    const y0 = Math.max(0, Math.floor(y - ry)), y1 = Math.min(rows - 1, Math.floor(y + ry));
+    for (let iy = y0; iy <= y1; iy++) {
+      const dy = (iy + 0.5 - y) / AR;
+      for (let ix = x0; ix <= x1; ix++) {
+        const i = iy * cols + ix;
+        if (chr[i]) continue;
+        const dx = ix + 0.5 - x;
+        const d = Math.sqrt(dx * dx + dy * dy) / R;
+        if (d >= 1) continue;
+        const q = 1 - d;
+        const p = st * q * Math.sqrt(q);
+        if (h32(ix * 31 + n * 7, iy, hf) >= p) continue;
+        const c = d < 0.34 ? C_PLUS : d < 0.67 ? C_COLON : C_DOT;
+        const k = hslk(HHU[n], HSA[n], HLI[n] * (1 - 0.28 * d), 0.88 - 0.42 * d);
+        if (k < 0) continue;
+        chr[i] = c; clr[i] = k; dep[i] = -1e8;
+      }
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* world, camera and projection                                        */
+/* ------------------------------------------------------------------ */
+
+const RIM_X = 0, RIM_Y = 3.05, RIM_Z = 0.38, RIM_R = 0.23;
+const BOARD_X = 0.915, BOARD_Y0 = 2.9, BOARD_Y1 = 3.95;
+const BASE_Z = -1.22, FAR_Z = 27.43, HALF_Z = 13.1, SIDE_X = 7.62;
+const LANE_X = 2.44, FT_Z = 4.58, ARC_R = 7.24, CORNER_X = 6.7;
+const STAND_Z = 31, STAND_TOP = 13;
+const CAM0 = { x: 0, y: 0.7, z: -1.0, pitch: 0.5 };
+let camX = 0, camY = 0.8, camZ = -0.75, camP = 0.4, cPc = 1, sPc = 0, FOC = 84, cyRow = 70, horizonRow = 0;
+let PJX = 0, PJY = 0, PJZ = 0;
+let hf = 0;
+
+function setCamera(t) {
+  let sh = 0;
+  if (t > 8.12 && t < 9.3) { const u = t - 8.12; sh = Math.exp(-5.5 * u) * Math.sin(38 * u); }
+  camX = CAM0.x + 0.01 * sh;
+  camY = CAM0.y + 0.028 * sh;
+  camZ = CAM0.z;
+  camP = CAM0.pitch + 0.01 * sh;
+  cPc = Math.cos(camP); sPc = Math.sin(camP);
+  FOC = NC * 0.9;
+  cyRow = rows * 0.5;
+  horizonRow = cyRow + FOC * Math.tan(camP) * AR;
+}
+function proj(X, Y, Z) {
+  const dx = X - camX, dy = Y - camY, dz = Z - camZ;
+  const zc = dy * sPc + dz * cPc;
+  if (zc < 0.1) return false;
+  const yc = dy * cPc - dz * sPc;
+  PJX = cx + FOC * dx / zc;
+  PJY = cyRow - FOC * yc / zc * AR;
+  PJZ = zc;
+  return true;
+}
+function slopeChar(dx, dyIso) {
+  const ax = Math.abs(dx), ay = Math.abs(dyIso);
+  if (ax < 0.4 * ay) return C_PIPE;
+  if (ay < 0.4 * ax) return C_DASH;
+  return (dx > 0) === (dyIso > 0) ? C_BS : C_SL;
+}
+function line3(x0, y0, z0, x1, y1, z1, step, ch, k, zb) {
+  const len = Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+  const n = Math.max(2, Math.ceil(len / step));
+  let px = 0, py = 0, have = false;
+  for (let i = 0; i <= n; i++) {
+    const f = i / n;
+    if (!proj(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, z0 + (z1 - z0) * f)) { have = false; continue; }
+    let c = ch;
+    if (c === 0) {
+      if (have) c = slopeChar(PJX - px, (PJY - py) / AR);
+      else {
+        const sx = PJX, sy = PJY;
+        if (proj(x0 + (x1 - x0) * (f + 0.01), y0 + (y1 - y0) * (f + 0.01), z0 + (z1 - z0) * (f + 0.01))) c = slopeChar(PJX - sx, (PJY - sy) / AR);
+        else c = C_PIPE;
+        PJX = sx; PJY = sy;
+        proj(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, z0 + (z1 - z0) * f);
+      }
+    }
+    px = PJX; py = PJY; have = true;
+    put(PJX, PJY, c, k, -PJZ + (zb || 0));
+  }
+}
+
+/* crowd excitement 0..1 */
+function excite(t) {
+  if (t < 2.4) return 0;
+  if (t < 3.0) return 0.18 * clamp01((t - 2.4) / 0.6);
+  if (t < 6.6) return 0.18 + 0.4 * clamp01((t - 3.0) / 3.6);
+  if (t < 8.12) return 0.58 + 0.17 * clamp01((t - 6.6) / 1.4);
+  return 0.38 + 0.62 * Math.exp(-(t - 8.12) / 2.2);
+}
+
+/* ------------------------------------------------------------------ */
+/* seeded data                                                         */
+/* ------------------------------------------------------------------ */
+
+const rng = mulberry32(7232026);
+const DUSTN = 260;
+const DX0 = new Float32Array(DUSTN), DY0 = new Float32Array(DUSTN), DZ0 = new Float32Array(DUSTN);
+const DVY = new Float32Array(DUSTN), DPH = new Float32Array(DUSTN);
+for (let i = 0; i < DUSTN; i++) {
+  DX0[i] = -8 + 16 * rng(); DY0[i] = 0.2 + 8.8 * rng(); DZ0[i] = 0.4 + 23 * rng();
+  DVY[i] = 0.04 + 0.1 * rng(); DPH[i] = rng() * TAU;
+}
+const SPKN = 70;
+const SPA = new Float32Array(SPKN), SPV = new Float32Array(SPKN), SPU = new Float32Array(SPKN), SPL = new Float32Array(SPKN), SPH = new Float32Array(SPKN);
+for (let i = 0; i < SPKN; i++) {
+  SPA[i] = rng() * TAU; SPV[i] = 1.2 + 3.2 * rng(); SPU[i] = 0.5 + 3.5 * rng(); SPL[i] = 0.5 + 0.5 * rng();
+  const q = rng(); SPH[i] = q < 0.4 ? -1 : q < 0.75 ? 356 : 44;
+}
+const CFN = 240;
+const CFX = new Float32Array(CFN), CFY = new Float32Array(CFN), CFZ = new Float32Array(CFN), CFV = new Float32Array(CFN);
+const CFS = new Float32Array(CFN), CFP = new Float32Array(CFN), CFT = new Float32Array(CFN), CFR = new Uint8Array(CFN);
+for (let i = 0; i < CFN; i++) {
+  CFX[i] = -5 + 10 * rng(); CFY[i] = 5.5 + 2.5 * rng(); CFZ[i] = 0.6 + 9 * rng(); CFV[i] = 0.55 + 0.7 * rng();
+  CFS[i] = 3 + 9 * rng(); CFP[i] = rng() * TAU; CFT[i] = 10.6 + 1.3 * rng(); CFR[i] = rng() < 0.55 ? 1 : 0;
+}
+const NUM_BITS = [
+  '.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####',
+  '.###.', '#...#', '....#', '..##.', '....#', '#...#', '.###.'
+];
+function numPixel(gx, gy) {
+  if (gy < 0 || gy > 6) return false;
+  if (gx >= 0 && gx <= 4) return NUM_BITS[gy][gx] === '#';
+  if (gx >= 6 && gx <= 10) return NUM_BITS[7 + gy][gx - 6] === '#';
+  return false;
+}
+
+/* ------------------------------------------------------------------ */
+/* the player: poses, inverse kinematics, primitives                   */
+/* ------------------------------------------------------------------ */
+
+const PO = new Float64Array(24), PB2 = new Float64Array(24), PTMP = new Float64Array(24);
+function setPose(o, X, Z, pY, lean, a, b, fa, fb, ball, nod, pole) {
+  o[0] = X; o[1] = Z; o[2] = pY; o[3] = lean;
+  o[4] = a[0]; o[5] = a[1]; o[6] = a[2];
+  o[7] = b[0]; o[8] = b[1]; o[9] = b[2];
+  o[10] = fa[0]; o[11] = fa[1]; o[12] = fa[2];
+  o[13] = fb[0]; o[14] = fb[1]; o[15] = fb[2];
+  o[16] = ball[0]; o[17] = ball[1]; o[18] = ball[2];
+  o[19] = nod; o[20] = pole;
+}
+function mixPose(o, b, w) {
+  for (let i = 0; i < 20; i++) o[i] += (b[i] - o[i]) * w;
+  if (w > 0.5) o[20] = b[20];
+}
+function lerp3(a, b, w) { return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w]; }
+
+function poseCatch(o) {
+  setPose(o, 0, 13.4, 0.95, 0.1, [-0.17, 0.38, -0.38], [0.17, 0.38, -0.38],
+    [-0.16, 0.07 - 0.95, -0.12], [0.16, 0.07 - 0.95, 0.15], [0, 0.4, -0.5], 0, 0);
+}
+function runPhase(t) { return TAU * 1.55 * Math.max(0, t - 3.4); }
+function poseRun(o, t) {
+  const pr = clamp01((t - 3.4) / 3.2);
+  const Z = 13.4 - 10.9 * Math.pow(pr, 1.2);
+  const X = 0.7 * Math.sin(pr * 2.6) * (1 - pr);
+  const ph = runPhase(t);
+  const pY = 1.0 + 0.045 * Math.cos(2 * ph);
+  const s = Math.sin(ph), c = Math.cos(ph);
+  const bf = ph / TAU - Math.floor(ph / TAU);
+  const bY = 0.12 + 0.93 * Math.abs(Math.cos(Math.PI * bf));
+  setPose(o, X, Z, pY, 0.22,
+    [-0.4, Math.max(0.98, bY + 0.13) - pY, -0.38],
+    [0.3, 0.1 + 0.28 * Math.max(0, s), -0.35 * s],
+    [-0.13, 0.07 + 0.42 * Math.pow(Math.max(0, c), 1.5) - pY, -0.5 * s],
+    [0.13, 0.07 + 0.42 * Math.pow(Math.max(0, -c), 1.5) - pY, 0.5 * s],
+    [-0.42, bY - pY, -0.42], 0.03 * Math.sin(2 * ph), 0);
+}
+const G_FA = [-0.15, 0.07 - 0.83, -0.3], G_FB = [0.15, 0.07 - 0.83, -0.05];
+function poseGather(o, t) {
+  const u = clamp01((t - 6.6) / 0.6);
+  const pY = 1.0 - 0.17 * easeIO(u);
+  const ua = clamp01(u * 2), ub = clamp01(u * 2 - 1);
+  setPose(o, 0, 2.5 - 0.3 * u, pY, 0.3,
+    [-0.14, 0.4, -0.36], [0.14, 0.4, -0.36],
+    [-0.15, 0.07 + 0.25 * Math.sin(Math.PI * ua) - pY, 0.35 + (-0.3 - 0.35) * ua],
+    [0.15, 0.07 + 0.25 * Math.sin(Math.PI * ub) - pY, 0.3 + (-0.05 - 0.3) * ub],
+    [0, 0.42, -0.5], 0, 0);
+}
+const WIND_A = [-0.2, 1.2, 0.3], REACH_B = [0.38, 0.95, -0.45];
+function poseLeap(o, t) {
+  const u = clamp01((t - 7.2) / 0.8);
+  const e = easeOutCubic(u), w = easeIO(u);
+  const a = lerp3([-0.14, 0.4, -0.36], WIND_A, w);
+  setPose(o, 0.12 * e, 2.2 - 1.25 * e, 0.83 + 1.17 * e, 0.3 - 0.36 * e,
+    a, lerp3([0.14, 0.4, -0.36], REACH_B, w),
+    lerp3(G_FA, [-0.15, -0.55, -0.28], e), lerp3(G_FB, [0.15, -0.94, 0.32], e),
+    [a[0], a[1] + 0.1, a[2] + 0.06], 0, u > 0.25 ? 2 : 0);
+}
+function poseSlam(o, t) {
+  const u = clamp01((t - 8.0) / 0.25);
+  const e = easeIO(u);
+  const X = 0.12, Z = 0.95 - 0.13 * e, pY = 2.0 - 0.04 * e;
+  const tgt = [RIM_X - X, 3.13 - pY, 0.56 - Z];
+  const m = [-0.08, 1.5, -0.15];
+  const q = 1 - e;
+  const a = [q * q * WIND_A[0] + 2 * q * e * m[0] + e * e * tgt[0], q * q * WIND_A[1] + 2 * q * e * m[1] + e * e * tgt[1], q * q * WIND_A[2] + 2 * q * e * m[2] + e * e * tgt[2]];
+  setPose(o, X, Z, pY, -0.06 + 0.24 * e, a, lerp3(REACH_B, [0.45, 0.45, -0.2], e),
+    [-0.15, -0.58, -0.22], [0.15, -0.85, 0.12], [a[0], a[1] + 0.08, a[2] - 0.02], 0, 2);
+}
+function rimDy(t) {
+  let d = 0;
+  if (t > 8.12) { const u = t - 8.12; d += 0.03 * Math.exp(-5 * u) * Math.sin(32 * u); }
+  if (t > 8.2 && t < 9.6) d -= 0.045 * clamp01((t - 8.2) / 0.1);
+  if (t >= 9.6) { const u = t - 9.6; d -= 0.045 * Math.exp(-6 * u) * Math.cos(30 * u); }
+  return d;
+}
+function poseHang(o, t) {
+  const tau = t - 8.25;
+  const gy = 3.09 + rimDy(t), gz = 0.6;
+  const th = 0.3 * Math.exp(-1.5 * tau) * Math.sin(4.4 * tau + 0.5) + 0.06;
+  const X = 0.16, pY = gy - 1.28 * Math.cos(th), Z = gz + 1.28 * Math.sin(th);
+  setPose(o, X, Z, pY, th, [RIM_X - X, gy - pY, gz - Z], [0.4, 0.28, -0.1],
+    [-0.12, -0.97 * Math.cos(th), 1.15 * Math.sin(th) - 0.04], [0.14, -0.95 * Math.cos(th), 1.1 * Math.sin(th) + 0.07],
+    [0, 0, 0], 0.04 * Math.sin(tau * 3), 0);
+}
+const FLEX_A = [-0.44, 0.92, -0.04], FLEX_B = [0.44, 0.92, -0.04];
+function poseDrop(o, t) {
+  poseHang(PTMP, 9.6);
+  const u = t - 9.6;
+  const Ph = PTMP[2];
+  const tf = Math.sqrt(Math.max(0, Ph - 0.8) / 4.9);
+  let pY, lean, fa, fb, a, b;
+  const ga = [PTMP[4], PTMP[5], PTMP[6]];
+  if (u < tf) {
+    pY = Ph - 4.9 * u * u;
+    const r = clamp01(u / 0.25);
+    a = lerp3(ga, [-0.4, 0.55, -0.15], r);
+    b = lerp3([0.4, 0.28, -0.1], [0.42, 0.5, -0.15], r);
+    lean = PTMP[3] + (0.12 - PTMP[3]) * r;
+    fa = [-0.14, -0.95, 0]; fb = [0.15, -0.95, 0.02];
+  } else {
+    const k = clamp01((u - tf) / (1.0 - tf));
+    const ke = easeOutCubic(k);
+    pY = 0.8 + 0.24 * ke;
+    lean = 0.28 + (-0.06 - 0.28) * ke;
+    const crouchA = [-0.32, 0.15, -0.25], crouchB = [0.32, 0.15, -0.25];
+    const k2 = clamp01((k - 0.3) / 0.7);
+    a = k < 0.3 ? lerp3([-0.4, 0.55, -0.15], crouchA, k / 0.3) : lerp3(crouchA, FLEX_A, easeIO(k2));
+    b = k < 0.3 ? lerp3([0.42, 0.5, -0.15], crouchB, k / 0.3) : lerp3(crouchB, FLEX_B, easeIO(k2));
+    fa = [-0.19, 0.07 - pY, -0.05]; fb = [0.19, 0.07 - pY, 0.06];
+  }
+  const zp = clamp01(u / 1.0);
+  setPose(o, PTMP[0] + (0.1 - PTMP[0]) * zp, PTMP[1] + (2.2 - PTMP[1]) * easeIO(zp), pY, lean,
+    a, b, fa, fb, [0, 0, 0], 0, u > 0.8 ? 1 : 0);
+}
+function poseHold(o, t) {
+  const pY = 1.04 + 0.012 * Math.sin(t * 2.2);
+  setPose(o, 0.1, 2.2, pY, -0.06, [FLEX_A[0], FLEX_A[1] + 0.02 * Math.sin(t * 2.2), FLEX_A[2]],
+    [FLEX_B[0], FLEX_B[1] + 0.02 * Math.sin(t * 2.2 + 0.5), FLEX_B[2]],
+    [-0.19, 0.07 - pY, -0.05], [0.19, 0.07 - pY, 0.06], [0, 0, 0], 0.04 * Math.sin(t * 1.2), 1);
+}
+/* returns false when the player is not on screen yet */
+function poseAt(o, t) {
+  if (t < 3.0) return false;
+  if (t < 3.4) { poseCatch(o); return true; }
+  if (t < 6.6) {
+    poseRun(o, t);
+    if (t < 3.6) { poseCatch(PB2); mixPose(PB2, o, sstep(3.4, 3.6, t)); o.set(PB2); }
+    return true;
+  }
+  if (t < 7.2) {
+    poseGather(o, t);
+    if (t < 6.75) { poseRun(PB2, 6.6); mixPose(PB2, o, sstep(6.6, 6.75, t)); o.set(PB2); }
+    return true;
+  }
+  if (t < 8.0) { poseLeap(o, t); return true; }
+  if (t < 8.25) { poseSlam(o, t); return true; }
+  if (t < 9.6) {
+    poseHang(o, t);
+    if (t < 8.36) { poseSlam(PB2, 8.25); mixPose(PB2, o, sstep(8.25, 8.36, t)); o.set(PB2); }
+    return true;
+  }
+  if (t < 10.6) { poseDrop(o, t); return true; }
+  poseHold(o, t);
+  return true;
+}
+function ballHeld(t) { return t >= 3.22 && t < 8.12; }
+
+/* joints */
+const JX = new Float64Array(17), JY = new Float64Array(17), JZ = new Float64Array(17);
+const J_P = 0, J_C = 1, J_H = 2, J_SA = 3, J_EA = 4, J_WA = 5, J_SB = 6, J_EB = 7, J_WB = 8;
+const J_HA = 9, J_KA = 10, J_AA = 11, J_TA = 12, J_HB = 13, J_KB = 14, J_AB = 15, J_TB = 16;
+function setJ(i, x, y, z) { JX[i] = x; JY[i] = y; JZ[i] = z; }
+function ik(s, mid, end, tx, ty, tz, l1, l2, px, py, pz) {
+  let dx = tx - JX[s], dy = ty - JY[s], dz = tz - JZ[s];
+  let d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const mx = (l1 + l2) * 0.999;
+  if (d > mx) { dx *= mx / d; dy *= mx / d; dz *= mx / d; d = mx; }
+  if (d < 1e-4) d = 1e-4;
+  const ux = dx / d, uy = dy / d, uz = dz / d;
+  const pd = px * ux + py * uy + pz * uz;
+  let qx = px - pd * ux, qy = py - pd * uy, qz = pz - pd * uz;
+  const ql = Math.sqrt(qx * qx + qy * qy + qz * qz) || 1;
+  qx /= ql; qy /= ql; qz /= ql;
+  const a = (l1 * l1 - l2 * l2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
+  setJ(mid, JX[s] + ux * a + qx * h, JY[s] + uy * a + qy * h, JZ[s] + uz * a + qz * h);
+  setJ(end, JX[s] + dx, JY[s] + dy, JZ[s] + dz);
+}
+function buildBody(o) {
+  const X = o[0], Z = o[1], pY = o[2], ln = o[3];
+  setJ(J_P, X, pY, Z);
+  setJ(J_C, X, pY + 0.6 * Math.cos(ln), Z - 0.6 * Math.sin(ln));
+  const hl = ln * 0.6 + o[19];
+  setJ(J_H, JX[J_C], JY[J_C] + 0.22 * Math.cos(hl), JZ[J_C] - 0.22 * Math.sin(hl));
+  setJ(J_SA, JX[J_C] - 0.23, JY[J_C] - 0.07, JZ[J_C]);
+  setJ(J_SB, JX[J_C] + 0.23, JY[J_C] - 0.07, JZ[J_C]);
+  setJ(J_HA, X - 0.11, pY - 0.05, Z);
+  setJ(J_HB, X + 0.11, pY - 0.05, Z);
+  const pm = o[20];
+  if (pm === 1) {
+    ik(J_SA, J_EA, J_WA, X + o[4], pY + o[5], Z + o[6], 0.34, 0.36, -1, -0.25, 0.1);
+    ik(J_SB, J_EB, J_WB, X + o[7], pY + o[8], Z + o[9], 0.34, 0.36, 1, -0.25, 0.1);
+  } else {
+    if (pm === 2) ik(J_SA, J_EA, J_WA, X + o[4], pY + o[5], Z + o[6], 0.34, 0.36, -0.6, 0.6, -0.3);
+    else ik(J_SA, J_EA, J_WA, X + o[4], pY + o[5], Z + o[6], 0.34, 0.36, -0.7, -0.4, 0.6);
+    ik(J_SB, J_EB, J_WB, X + o[7], pY + o[8], Z + o[9], 0.34, 0.36, 0.7, -0.4, 0.6);
+  }
+  ik(J_HA, J_KA, J_AA, X + o[10], pY + o[11], Z + o[12], 0.5, 0.5, -0.25, 0.1, -1);
+  ik(J_HB, J_KB, J_AB, X + o[13], pY + o[14], Z + o[15], 0.5, 0.5, 0.25, 0.1, -1);
+  setJ(J_TA, JX[J_AA], JY[J_AA] - 0.03, JZ[J_AA] - 0.19);
+  setJ(J_TB, JX[J_AB], JY[J_AB] - 0.03, JZ[J_AB] - 0.19);
+}
+
+const M_JERSEY = 1, M_SKIN = 2, M_HEAD = 3, M_SHORTS = 4, M_SHIN = 5, M_SHOE = 6;
+const PRN = 19;
+const PAX = new Float32Array(PRN), PAY = new Float32Array(PRN), PAZ = new Float32Array(PRN);
+const PBX = new Float32Array(PRN), PBY = new Float32Array(PRN), PBZ = new Float32Array(PRN);
+const PRA = new Float32Array(PRN), PRB = new Float32Array(PRN), PRM = new Float32Array(PRN), PMAT = new Uint8Array(PRN);
+let primN = 0, primOK = true;
+function addPrim(x0, y0, z0, x1, y1, z1, r0, r1, mat) {
+  if (!proj(x0, y0, z0)) { primOK = false; return; }
+  const ax = PJX, ay = PJY / AR, az = PJZ;
+  if (!proj(x1, y1, z1)) { primOK = false; return; }
+  const i = primN++;
+  PAX[i] = ax; PAY[i] = ay; PAZ[i] = az;
+  PBX[i] = PJX; PBY[i] = PJY / AR; PBZ[i] = PJZ;
+  PRA[i] = r0 * 1.12 * FOC / az; PRB[i] = r1 * 1.12 * FOC / PJZ; PRM[i] = (r0 + r1) * 0.5; PMAT[i] = mat;
+}
+function limbPrim(a, b, r0, r1, mat) { addPrim(JX[a], JY[a], JZ[a], JX[b], JY[b], JZ[b], r0, r1, mat); }
+function buildPrims() {
+  primN = 0; primOK = true;
+  addPrim(JX[J_P], JY[J_P] + 0.06, JZ[J_P], JX[J_C], JY[J_C] - 0.07, JZ[J_C], 0.19, 0.215, M_JERSEY);
+  limbPrim(J_SA, J_SB, 0.085, 0.085, M_SKIN);
+  addPrim(JX[J_C], JY[J_C], JZ[J_C], JX[J_H], JY[J_H] - 0.09, JZ[J_H], 0.062, 0.058, M_SKIN);
+  addPrim(JX[J_H], JY[J_H], JZ[J_H], JX[J_H], JY[J_H] + 0.001, JZ[J_H], 0.115, 0.115, M_HEAD);
+  limbPrim(J_SA, J_EA, 0.064, 0.052, M_SKIN);
+  limbPrim(J_EA, J_WA, 0.05, 0.044, M_SKIN);
+  addPrim(JX[J_WA], JY[J_WA], JZ[J_WA], JX[J_WA], JY[J_WA] + 0.001, JZ[J_WA], 0.058, 0.058, M_SKIN);
+  limbPrim(J_SB, J_EB, 0.064, 0.052, M_SKIN);
+  limbPrim(J_EB, J_WB, 0.05, 0.044, M_SKIN);
+  addPrim(JX[J_WB], JY[J_WB], JZ[J_WB], JX[J_WB], JY[J_WB] + 0.001, JZ[J_WB], 0.058, 0.058, M_SKIN);
+  limbPrim(J_HA, J_HB, 0.135, 0.135, M_SHORTS);
+  addPrim(JX[J_HA], JY[J_HA], JZ[J_HA], JX[J_HA] + (JX[J_KA] - JX[J_HA]) * 0.45, JY[J_HA] + (JY[J_KA] - JY[J_HA]) * 0.45, JZ[J_HA] + (JZ[J_KA] - JZ[J_HA]) * 0.45, 0.125, 0.11, M_SHORTS);
+  addPrim(JX[J_HB], JY[J_HB], JZ[J_HB], JX[J_HB] + (JX[J_KB] - JX[J_HB]) * 0.45, JY[J_HB] + (JY[J_KB] - JY[J_HB]) * 0.45, JZ[J_HB] + (JZ[J_KB] - JZ[J_HB]) * 0.45, 0.125, 0.11, M_SHORTS);
+  limbPrim(J_HA, J_KA, 0.088, 0.068, M_SKIN);
+  limbPrim(J_HB, J_KB, 0.088, 0.068, M_SKIN);
+  limbPrim(J_KA, J_AA, 0.064, 0.048, M_SHIN);
+  limbPrim(J_KB, J_AB, 0.064, 0.048, M_SHIN);
+  limbPrim(J_AA, J_TA, 0.058, 0.055, M_SHOE);
+  limbPrim(J_AB, J_TB, 0.058, 0.055, M_SHOE);
+}
+
+function shadeLit(ox, oy) {
+  const nz2 = 1 - ox * ox - oy * oy;
+  const nz = nz2 > 0 ? Math.sqrt(nz2) : 0;
+  let d = -0.6 * ox - 0.42 * oy + 0.68 * nz;
+  d = d < 0 ? 0 : d > 1 ? 1 : d;
+  let lit = 0.12 + 0.88 * d;
+  if (ox > 0.55) lit = Math.max(lit, 0.3 + 0.55 * (ox - 0.55) / 0.45);
+  return lit > 1 ? 1 : lit;
+}
+function drawPlayer(t, appear) {
+  buildPrims();
+  if (!primOK || primN === 0) return;
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (let i = 0; i < primN; i++) {
+    const r = Math.max(PRA[i], PRB[i]) + 1;
+    x0 = Math.min(x0, PAX[i] - r, PBX[i] - r); x1 = Math.max(x1, PAX[i] + r, PBX[i] + r);
+    y0 = Math.min(y0, PAY[i] - r, PBY[i] - r); y1 = Math.max(y1, PAY[i] + r, PBY[i] + r);
+  }
+  const ix0 = Math.max(0, Math.floor(x0)), ix1 = Math.min(cols - 1, Math.floor(x1));
+  const iy0 = Math.max(0, Math.floor(y0 * AR)), iy1 = Math.min(rows - 1, Math.floor(y1 * AR));
+  for (let iy = iy0; iy <= iy1; iy++) {
+    const py = (iy + 0.5) / AR;
+    for (let ix = ix0; ix <= ix1; ix++) {
+      const px = ix + 0.5;
+      let best = -1, bz = 1e9, bq = 0, bh = 0, box = 0, boy = 0, brad = 1, bux = 0, buy = 1;
+      for (let i = 0; i < primN; i++) {
+        const ax = PAX[i], ay = PAY[i];
+        const bax = PBX[i] - ax, bay = PBY[i] - ay;
+        const pax = px - ax, pay = py - ay;
+        const l2 = bax * bax + bay * bay;
+        let h = l2 > 1e-9 ? (pax * bax + pay * bay) / l2 : 0;
+        h = h < 0 ? 0 : h > 1 ? 1 : h;
+        const qx = pax - bax * h, qy = pay - bay * h;
+        const rad = PRA[i] + (PRB[i] - PRA[i]) * h;
+        const dist = Math.sqrt(qx * qx + qy * qy);
+        const q = dist / Math.max(rad, 0.35);
+        if (q >= 1.06) continue;
+        const qq = q > 1 ? 1 : q;
+        const zf = PAZ[i] + (PBZ[i] - PAZ[i]) * h - PRM[i] * Math.sqrt(1 - qq * qq);
+        if (zf < bz) {
+          bz = zf; best = i; bq = qq; bh = h; brad = Math.max(rad, 0.35);
+          box = qx / brad; boy = qy / brad;
+          const l = Math.sqrt(l2) || 1;
+          bux = bax / l; buy = bay / l;
+        }
+      }
+      if (best < 0) continue;
+      if (appear < 1 && h32(ix, iy, hf + 101) > appear) continue;
+      const lit = shadeLit(box, boy);
+      const mat = PMAT[best];
+      let H = 24, S = 42, L = 7 + 44 * lit;
+      if (mat === M_JERSEY || mat === M_SHORTS) {
+        let prx = -buy, pry = bux;
+        if (prx < 0) { prx = -prx; pry = -pry; }
+        const lat = box * prx + boy * pry;
+        H = 225; S = 8; L = 5 + 28 * lit;
+        if (mat === M_JERSEY) {
+          const hh = 1 - bh;
+          if (brad > 3 && bq > 0.84 && bh > 0.25) { H = 356; S = 80; L = 24 + 32 * lit; }
+          else if (brad > 3.5) {
+            const gx = Math.floor((lat + 0.74) / 1.48 * 13) - 1;
+            const gy = Math.floor((0.86 - bh) / 0.56 * 9) - 1;
+            if (lat > -0.74 && lat < 0.74 && bh < 0.86 && bh > 0.3) {
+              if (numPixel(gx, gy)) { H = 40; S = 10; L = 62 + 34 * lit; }
+              else if (numPixel(gx - 1, gy) || numPixel(gx + 1, gy) || numPixel(gx, gy - 1) || numPixel(gx, gy + 1) ||
+                numPixel(gx - 1, gy - 1) || numPixel(gx + 1, gy + 1) || numPixel(gx - 1, gy + 1) || numPixel(gx + 1, gy - 1)) {
+                H = 356; S = 80; L = 28 + 30 * lit;
+              }
+            }
+          }
+          if (hh < 0) L += 0;
+        } else if (Math.abs(lat) > 0.72 && brad > 2) { H = 356; S = 80; L = 24 + 32 * lit; }
+      } else if (mat === M_HEAD) {
+        if (boy < -0.36) { H = 20; S = 15; L = 4 + 10 * lit; }
+        else if (brad > 4 && boy > -0.14 && boy < 0.03 && Math.abs(box) > 0.2 && Math.abs(box) < 0.5) { H = 20; S = 20; L = 4; }
+      } else if (mat === M_SHIN) {
+        if (bh > 0.6) { H = 0; S = 0; L = 52 + 42 * lit; }
+      } else if (mat === M_SHOE) {
+        if (bh > 0.62) { H = 356; S = 80; L = 26 + 30 * lit; } else { H = 0; S = 0; L = 55 + 40 * lit; }
+      }
+      const gi = Math.min(4, (lit * 5) | 0);
+      put(px, iy + 0.5, TREE_G[gi], hslk(H, S, L), -bz);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* the ball                                                            */
+/* ------------------------------------------------------------------ */
+
+const BALLP = new Float64Array(4);
+function ballFree(t) {
+  if (t >= 3.0 && t < 3.22) {
+    const u = (t - 3.0) / 0.22;
+    poseCatch(PTMP);
+    const ex = PTMP[0] + PTMP[16], ey = PTMP[2] + PTMP[17], ez = PTMP[1] + PTMP[18];
+    BALLP[0] = -5.5 + (ex + 5.5) * u; BALLP[1] = 1.7 + (ey - 1.7) * u + 0.6 * Math.sin(Math.PI * u); BALLP[2] = 12.6 + (ez - 12.6) * u;
+    BALLP[3] = t * 14;
+    return true;
+  }
+  if (t >= 8.12) {
+    poseSlam(PTMP, 8.12);
+    const sx = PTMP[0] + PTMP[16], sy = PTMP[2] + PTMP[17], sz = PTMP[1] + PTMP[18];
+    const tau = t - 8.12;
+    if (tau < 0.43) {
+      const w = clamp01(tau / 0.09);
+      BALLP[0] = sx + (RIM_X - sx) * w;
+      BALLP[1] = sy - 5 * tau - 4.9 * tau * tau;
+      BALLP[2] = sz + (RIM_Z - sz) * w;
+    } else {
+      const u = tau - 0.43;
+      if (u > 0.5) return false;
+      BALLP[0] = RIM_X + 0.08 * u;
+      BALLP[1] = 0.12 + 4.2 * u - 4.9 * u * u;
+      BALLP[2] = RIM_Z - 3.4 * u;
+    }
+    BALLP[3] = -t * 18;
+    return true;
+  }
+  return false;
+}
+function drawBall(bx, by, bz, spin) {
+  if (!proj(bx, by, bz)) return;
+  const R = 0.12 * FOC / PJZ;
+  const cxp = PJX, cyp = PJY, zc = PJZ;
+  const ix0 = Math.max(0, Math.floor(cxp - R - 1)), ix1 = Math.min(cols - 1, Math.floor(cxp + R + 1));
+  const iy0 = Math.max(0, Math.floor(cyp - R * AR - 1)), iy1 = Math.min(rows - 1, Math.floor(cyp + R * AR + 1));
+  const cs = Math.cos(spin), sn = Math.sin(spin);
+  const Rr = Math.max(R, 0.6);
+  for (let iy = iy0; iy <= iy1; iy++) {
+    for (let ix = ix0; ix <= ix1; ix++) {
+      const nx = (ix + 0.5 - cxp) / Rr, ny = (iy + 0.5 - cyp) / AR / Rr;
+      const q2 = nx * nx + ny * ny;
+      if (q2 > 1) continue;
+      const nz = Math.sqrt(1 - q2);
+      const lit = shadeLit(nx, ny);
+      const ry = ny * cs - nz * sn, rz = ny * sn + nz * cs;
+      let c, k;
+      if (R > 2.2 && (Math.abs(nx) < 0.09 || Math.abs(ry) < 0.09 || Math.abs(rz * 0.7 + nx * 0.7) < 0.08)) {
+        c = Math.abs(ry) < 0.09 ? C_DASH : C_PIPE; k = hslk(15, 40, 8 + 6 * lit);
+      } else {
+        c = TREE_G[Math.min(4, (lit * 5) | 0)]; k = hslk(22, 88, 14 + 46 * lit);
+      }
+      put(ix + 0.5, iy + 0.5, c, k, -(zc - 0.12 * nz));
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* arena                                                               */
+/* ------------------------------------------------------------------ */
+
+function drawDust(g) {
+  for (let i = 0; i < DUSTN; i++) {
+    let yy = DY0[i] - 0.2 + g * DVY[i];
+    yy -= 8.8 * Math.floor(yy / 8.8);
+    const Y = 0.2 + yy;
+    const X = DX0[i] + 0.25 * Math.sin(g * 0.17 + DPH[i]);
+    const Z = DZ0[i] + 0.2 * Math.sin(g * 0.11 + DPH[i] * 1.7);
+    if (!proj(X, Y, Z)) continue;
+    const a = 0.22 + 0.55 * clamp01(3 / PJZ) * (0.6 + 0.4 * Math.sin(g * 1.3 + DPH[i]));
+    put(PJX, PJY, PJZ < 3.5 ? C_PLUS : C_DOT, rgbk(255, 236, 214, a), -1e7 + a);
+  }
+}
+
+function drawBanks(t) {
+  for (let k = 0; k < 7; k++) {
+    const ton = 0.05 + 0.065 * k;
+    if (t < ton) continue;
+    const age = t - ton;
+    const fl = age < 0.12 ? (h32(k, Math.floor(age * 60), 3) < 0.5 ? 0.3 : 1) : 1;
+    const X = -18 + 6 * k;
+    if (!proj(X - 1.3, 16.9, STAND_Z - 0.5)) continue;
+    const xa = PJX, ya = PJY;
+    if (!proj(X + 1.3, 16.1, STAND_Z - 0.5)) continue;
+    const xb = PJX, yb = PJY;
+    for (let iy = Math.floor(Math.min(ya, yb)); iy <= Math.floor(Math.max(ya, yb)); iy++) {
+      for (let ix = Math.floor(xa); ix <= Math.floor(xb); ix++) {
+        const edge = iy === Math.floor(Math.min(ya, yb)) || iy === Math.floor(Math.max(ya, yb)) || ix === Math.floor(xa) || ix === Math.floor(xb);
+        put(ix + 0.5, iy + 0.5, edge ? C_HASH : C_AT, hslk(42, 40, (edge ? 80 : 96) * fl), -1.5e5);
+      }
+    }
+    addHalo((xa + xb) / 2, (ya + yb) / 2, (5 + 3 * Math.exp(-age * 3)) * fl, 42, 50, 86, 0.5 * fl);
+  }
+}
+
+const ROWV = new Float32Array(1024), ROWDY = new Float32Array(1024), ROWDZ = new Float32Array(1024);
+function rayRows() {
+  for (let iy = 0; iy < rows && iy < 1024; iy++) {
+    const v = -(iy + 0.5 - cyRow) / (FOC * AR);
+    ROWDY[iy] = v * cPc + sPc;
+    ROWDZ[iy] = -v * sPc + cPc;
+  }
+}
+
+function drawStands(t, E, shX, shZ) {
+  if (t < 2.4) return;
+  const fillR = 34 * easeOutCubic((t - 2.4) / 0.6);
+  const flashP = 0.0008 + 0.022 * E * E * E;
+  let halos = 0;
+  const top = Math.max(0, Math.floor(horizonRow - 40));
+  for (let iy = top; iy < Math.min(rows, Math.ceil(horizonRow)); iy++) {
+    const ddy = ROWDY[iy], ddz = ROWDZ[iy];
+    if (ddz <= 0.01) continue;
+    const tt = (STAND_Z - camZ) / ddz;
+    const Y = camY + ddy * tt;
+    if (Y < 0 || Y > STAND_TOP + 0.7) continue;
+    for (let ix = 0; ix < cols; ix++) {
+      const u = (ix + 0.5 - cx) / FOC;
+      const X = camX + u * tt;
+      if (Math.abs(X) > fillR) continue;
+      const i = iy * cols + ix;
+      if (Y > STAND_TOP) {
+        let ph = (X * 0.9 + t * 3) / 2.2;
+        ph -= Math.floor(ph);
+        const red = ph < 0.5;
+        const k = hslk(red ? 356 : 0, red ? 80 : 0, (red ? 42 : 78) * (0.7 + 0.3 * E));
+        if (-2e5 >= dep[i]) { dep[i] = -2e5; chr[i] = C_EQ; clr[i] = k; tag[i] = 0; }
+        continue;
+      }
+      const sxI = Math.floor((X + 100) / 0.55), ryI = Math.floor(Y / 0.5);
+      let fy = Y / 0.5 - ryI;
+      fy += 0.12 * E * Math.sin(t * 7 + sxI * 0.7) * (E > 0.6 ? 1 : 0);
+      const hs = h32(sxI, ryI, 5);
+      if (hs < 0.22) continue;
+      let c, k;
+      if (h32(ix, iy, hf) < flashP) {
+        c = C_STAR; k = hslk(0, 0, 96);
+        if (halos < 40 && h32(ix, iy, hf + 9) < 0.3) { addHalo(ix + 0.5, iy + 0.5, 1.8, 0, 0, 90, 0.6); halos++; }
+      } else if (fy > 0.58) {
+        c = C_o; k = hslk(24, 30, (10 + 8 * hs) * (0.7 + 0.5 * E));
+      } else {
+        c = hs < 0.4 ? C_8 : hs < 0.7 ? C_HASH : C_PCT;
+        const shirt = h32(sxI, ryI, 6);
+        const hue = shirt < 0.35 ? 356 : shirt < 0.6 ? 220 : 0;
+        const sat = shirt < 0.35 ? 55 : shirt < 0.6 ? 12 : 0;
+        const lum = shirt > 0.85 ? 26 : 11 + 8 * hs;
+        k = hslk(hue, sat, lum * (0.7 + 0.5 * E));
+      }
+      if (-2e5 >= dep[i]) { dep[i] = -2e5; chr[i] = c; clr[i] = k; tag[i] = 0; }
+    }
+  }
+}
+
+function drawFloor(t, shX, shZ, shR, shA) {
+  if (t < 0.5) return;
+  const rz = BASE_Z + 41 * easeOutCubic((t - 0.5) / 1.0);
+  const iy0 = Math.max(0, Math.ceil(horizonRow));
+  for (let iy = iy0; iy < rows; iy++) {
+    const ddy = ROWDY[iy], ddz = ROWDZ[iy];
+    if (ddy >= -1e-4) continue;
+    const tt = -camY / ddy;
+    const Z = camZ + ddz * tt;
+    let fz = 0.05;
+    if (iy + 1 < rows && ROWDY[iy + 1] < -1e-4) fz = Math.abs(camZ - ROWDZ[iy + 1] * camY / ROWDY[iy + 1] - Z);
+    else if (iy > 0 && ROWDY[iy - 1] < -1e-4) fz = Math.abs(camZ - ROWDZ[iy - 1] * camY / ROWDY[iy - 1] - Z);
+    const fx = tt / FOC;
+    if (Z > rz) continue;
+    const edge = rz - Z < 0.6 + fz && rz < FAR_Z + 12;
+    const wx = 0.035 + fx * 0.5, wz = 0.035 + fz * 0.5;
+    for (let ix = 0; ix < cols; ix++) {
+      const u = (ix + 0.5 - cx) / FOC;
+      const X = camX + u * tt;
+      const i = iy * cols + ix;
+      if (-1e5 < dep[i]) continue;
+      let c = 0, k = -1;
+      if (edge) { c = C_HASH; k = hslk(44, 60, 82); }
+      else {
+        const ax = Math.abs(X);
+        const inCourt = ax <= SIDE_X + wx && Z >= BASE_Z && Z <= FAR_Z + wz;
+        let line = false;
+        if (inCourt) {
+          if (Math.abs(ax - SIDE_X) < wx || Math.abs(Z - FAR_Z) < wz || Math.abs(Z - HALF_Z) < wz) line = true;
+          else if ((Math.abs(ax - LANE_X) < wx && Z < FT_Z) || (Math.abs(Z - FT_Z) < wz && ax <= LANE_X)) line = true;
+          else {
+            const dzf = Z - FT_Z, rf = Math.hypot(X, dzf);
+            const drf = 0.035 + 0.5 * (ax * fx + Math.abs(dzf) * fz) / Math.max(rf, 0.05);
+            if (Math.abs(rf - 1.8) < drf && (dzf > 0 || ((Math.atan2(X, dzf) * 6) & 1))) line = true;
+            const dz3 = Z - RIM_Z, r3 = Math.hypot(X, dz3);
+            const dr3 = 0.035 + 0.5 * (ax * fx + Math.abs(dz3) * fz) / Math.max(r3, 0.05);
+            if (Math.abs(r3 - ARC_R) < dr3 && ax <= CORNER_X && dz3 > 0) line = true;
+            if (Math.abs(ax - CORNER_X) < wx && dz3 < Math.sqrt(ARC_R * ARC_R - CORNER_X * CORNER_X)) line = true;
+            if (Math.abs(r3 - 1.22) < dr3 && dz3 > 0) line = true;
+            const dzc = Z - HALF_Z, rc = Math.hypot(X, dzc);
+            if (Math.abs(rc - 1.8) < 0.035 + 0.5 * (ax * fx + Math.abs(dzc) * fz) / Math.max(rc, 0.05)) line = true;
+          }
+        }
+        const spot = 12 * Math.exp(-(X * X) / 20 - ((Z - 5) * (Z - 5)) / 110);
+        const fade = 0.55 + 0.45 * Math.exp(-tt / 18);
+        let L;
+        if (line) { c = C_HASH; L = (58 + spot) * fade; k = 1; }
+        else if (inCourt && ax < LANE_X && Z < FT_Z) {
+          const hh = h32(ix, iy, 31);
+          if (hh > 0.88) continue;
+          c = tt < 6 ? C_EQ : C_DASH; L = (17 + 6 * hh + spot * 0.6) * fade; k = 2;
+        } else if (inCourt) {
+          const pi = Math.floor((X + 40) / 0.24);
+          const pj = Math.floor((Z + 20 + (pi % 5) * 0.7) / 2.4);
+          const ph = h32(pi, pj, 9);
+          if (h32(ix, iy, 33) > 0.88) continue;
+          c = tt < 6 ? C_EQ : C_DASH; L = (20 + 12 * ph + spot) * fade; k = 3;
+        } else {
+          if (h32(ix, iy, 35) > 0.5) continue;
+          c = C_DASH; L = 9 * fade; k = 4;
+        }
+        if (shA > 0) {
+          const dsx = X - shX, dsz = (Z - shZ) * 0.8;
+          const ds = Math.sqrt(dsx * dsx + dsz * dsz);
+          if (ds < shR) L *= 1 - shA * (1 - ds / shR);
+        }
+        if (k === 1) k = hslk(40, 12, L);
+        else if (k === 2) k = hslk(356, 42, L);
+        else if (k === 3) k = hslk(31, 42, L);
+        else k = hslk(220, 10, L);
+      }
+      if (k >= 0) { dep[i] = -1e5; chr[i] = c; clr[i] = k; tag[i] = 0; }
+    }
+  }
+}
+
+function drawBoard(t) {
+  if (t < 1.1) return;
+  const p = clamp01((t - 1.1) / 0.4);
+  const W = BOARD_X, Y0 = BOARD_Y0, Y1 = BOARD_Y1;
+  const hw = W, hh = Y1 - Y0;
+  const half = hw + hh + hw;
+  const lim = p * half;
+  const kf = hslk(210, 10, 80), kp = hslk(220, 8, 36);
+  const segs = [[0, Y0, W, Y0], [W, Y0, W, Y1], [W, Y1, 0, Y1]];
+  let acc = 0;
+  for (let side = -1; side <= 1; side += 2) {
+    acc = 0;
+    for (let s = 0; s < 3; s++) {
+      const g = segs[s];
+      const len = Math.hypot(g[2] - g[0], g[3] - g[1]);
+      if (acc >= lim) break;
+      const f = Math.min(1, (lim - acc) / len);
+      const ex = g[0] + (g[2] - g[0]) * f, ey = g[1] + (g[3] - g[1]) * f;
+      if (s === 0) {
+        for (let r = 0; r < 3; r++) line3(side * g[0], Y0 + r * 0.035, 0, side * ex, Y0 + r * 0.035, 0, 0.02, C_EQ, kp, 0);
+      } else line3(side * g[0], g[1], 0, side * ex, ey, 0, 0.02, s === 1 ? C_PIPE : C_DASH, kf, 0);
+      if (f < 1 && proj(side * ex, ey, 0)) addHalo(PJX, PJY, 3, 200, 30, 90, 0.6);
+      acc += len;
+    }
+  }
+  if (p >= 1) {
+    const a = clamp01((t - 1.5) / 0.3);
+    const ks = hslk(210, 10, 75, a);
+    line3(-0.295, 3.2, 0.001, 0.295, 3.2, 0.001, 0.02, C_DASH, ks, 0);
+    line3(-0.295, 3.65, 0.001, 0.295, 3.65, 0.001, 0.02, C_DASH, ks, 0);
+    line3(-0.295, 3.2, 0.001, -0.295, 3.65, 0.001, 0.02, C_PIPE, ks, 0);
+    line3(0.295, 3.2, 0.001, 0.295, 3.65, 0.001, 0.02, C_PIPE, ks, 0);
+    const kg = hslk(200, 30, 70, 0.16 * a);
+    for (let gx = -0.88; gx <= 0.88; gx += 0.07) {
+      for (let gy = 2.98; gy <= 3.92; gy += 0.07) {
+        if (h32(Math.round(gx * 100), Math.round(gy * 100), 3) > 0.35) continue;
+        if (proj(gx, gy, 0.002)) put(PJX, PJY, C_COLON, kg, -1e4);
+      }
+    }
+    line3(0, 2.96, 0.0, 0, 3.04, RIM_Z - RIM_R, 0.02, C_EQ, hslk(220, 8, 45), 0);
+  }
+}
+
+function drawRim(t) {
+  if (t < 1.4) return;
+  const sweep = clamp01((t - 1.4) / 0.4) * TAU;
+  const dy = rimDy(t);
+  const imp = t > 8.12 ? Math.exp(-(t - 8.12) * 4) : 0;
+  const n = 160;
+  for (let i = 0; i <= n; i++) {
+    const a = i / n * TAU;
+    if (a > sweep) break;
+    const X = RIM_X + RIM_R * Math.sin(a), Z = RIM_Z - RIM_R * Math.cos(a);
+    const front = Math.cos(a);
+    const L = 46 + 10 * front + 40 * imp;
+    if (proj(X, RIM_Y + dy, Z)) put(PJX, PJY, C_AT, hslk(16, 88, L), -PJZ + 0.02);
+    if (proj(X, RIM_Y + dy - 0.022, Z)) put(PJX, PJY, C_O, hslk(16, 80, L * 0.7), -PJZ + 0.01);
+  }
+  if (sweep < TAU) {
+    const a = sweep;
+    if (proj(RIM_X + RIM_R * Math.sin(a), RIM_Y, RIM_Z - RIM_R * Math.cos(a))) {
+      put(PJX, PJY, C_AT, hslk(30, 60, 98), -PJZ + 0.05);
+      addHalo(PJX, PJY, 4, 24, 80, 80, 0.6);
+    }
+  }
+  if (imp > 0.02 && proj(RIM_X, RIM_Y + dy, RIM_Z)) addHalo(PJX, PJY, 4 + 10 * imp, 30, 70, 90, 0.8 * imp);
+}
+
+const NETN = 12, NETL = 5;
+const NETY = [0, 0.11, 0.22, 0.33, 0.43];
+const NX = new Float32Array(NETN * NETL), NY = new Float32Array(NETN * NETL), NZ = new Float32Array(NETN * NETL);
+function drawNet(t, bx, by, bz, ballIn) {
+  if (t < 1.8) return;
+  const vis = clamp01((t - 1.8) / 0.6) * (NETL - 1);
+  const dy = rimDy(t);
+  const tau = t - 8.12;
+  for (let l = 0; l < NETL; l++) {
+    const f = l / (NETL - 1);
+    let r = RIM_R * 0.96 + (0.13 - RIM_R * 0.96) * f;
+    let yy = RIM_Y + dy - NETY[l] * (1 - dy * 2), zz = 0;
+    if (ballIn) r += 0.07 * Math.exp(-Math.pow((yy - by) / 0.13, 2));
+    if (tau > 0) {
+      yy -= 0.12 * f * Math.exp(-3 * tau) * Math.sin(14 * tau - l * 0.9);
+      zz -= 0.1 * f * Math.exp(-2.5 * tau) * Math.sin(11 * tau - l);
+    }
+    zz += 0.01 * f * Math.sin(t * 1.3 + l);
+    for (let k = 0; k < NETN; k++) {
+      const a = (k + 0.5 * (l & 1)) / NETN * TAU;
+      const j = l * NETN + k;
+      NX[j] = RIM_X + r * Math.sin(a); NY[j] = yy; NZ[j] = RIM_Z - r * Math.cos(a) + zz;
+    }
+  }
+  for (let l = 0; l < NETL - 1; l++) {
+    const vf = clamp01(vis - l);
+    if (vf <= 0) break;
+    for (let k = 0; k < NETN; k++) {
+      const j0 = l * NETN + k;
+      const ja = (l + 1) * NETN + k;
+      const jb = (l + 1) * NETN + ((l & 1) ? (k + 1) % NETN : (k + NETN - 1) % NETN);
+      const back = NZ[j0] > RIM_Z;
+      const kk = hslk(0, 0, back ? 62 : 88, back ? 0.55 : 0.9);
+      line3(NX[j0], NY[j0], NZ[j0], NX[j0] + (NX[ja] - NX[j0]) * vf, NY[j0] + (NY[ja] - NY[j0]) * vf, NZ[j0] + (NZ[ja] - NZ[j0]) * vf, 0.025, 0, kk, -0.01);
+      line3(NX[j0], NY[j0], NZ[j0], NX[j0] + (NX[jb] - NX[j0]) * vf, NY[j0] + (NY[jb] - NY[j0]) * vf, NZ[j0] + (NZ[jb] - NZ[j0]) * vf, 0.025, 0, kk, -0.01);
+    }
+  }
+}
+
+function drawImpact(t) {
+  if (t < 8.12 || t > 9.4) return;
+  const tau = t - 8.12;
+  if (tau < 0.65) {
+    for (let r = 0; r < 2; r++) {
+      const tr = tau - r * 0.07;
+      if (tr < 0) continue;
+      const R = 0.25 + 3.2 * easeOutCubic(tr / 0.6);
+      const a0 = 1 - tr / 0.65;
+      const n = Math.ceil(R * 60);
+      for (let i = 0; i < n; i++) {
+        const a = i / n * TAU;
+        if (proj(RIM_X + R * Math.sin(a), RIM_Y, RIM_Z - R * Math.cos(a))) put(PJX, PJY, C_HASH, r ? hslk(356, 80, 60, a0) : hslk(0, 0, 95, a0), -PJZ - 0.5);
+      }
+    }
+  }
+  for (let i = 0; i < SPKN; i++) {
+    const tl = tau / SPL[i];
+    if (tl > 1) continue;
+    const X = RIM_X + Math.sin(SPA[i]) * SPV[i] * tau;
+    const Z = RIM_Z - Math.cos(SPA[i]) * SPV[i] * tau;
+    const Y = RIM_Y + SPU[i] * tau - 4.9 * tau * tau;
+    if (!proj(X, Y, Z)) continue;
+    const ch = tl < 0.35 ? C_STAR : tl < 0.7 ? C_PLUS : C_DOT;
+    const k = SPH[i] < 0 ? hslk(0, 0, 96, 1 - 0.6 * tl) : hslk(SPH[i], 70, 70, 1 - 0.6 * tl);
+    put(PJX, PJY, ch, k, -PJZ + 1);
+  }
+}
+
+function floorRing(X, Z, R, ch, k) {
+  const n = Math.ceil(R * 50) + 12;
+  for (let i = 0; i < n; i++) {
+    const a = i / n * TAU;
+    if (proj(X + R * Math.sin(a), 0.01, Z + R * Math.cos(a))) put(PJX, PJY, ch, k, -PJZ - 0.3);
+  }
+}
+
+function drawConfetti(t) {
+  if (t < 10.6) return;
+  for (let i = 0; i < CFN; i++) {
+    const age = t - CFT[i];
+    if (age < 0) continue;
+    let fall = CFV[i] * age;
+    fall -= 7.5 * Math.floor(fall / 7.5);
+    const Y = CFY[i] - fall;
+    const X = CFX[i] + 0.35 * Math.sin(age * 1.7 + CFP[i]);
+    const Z = CFZ[i] + 0.2 * Math.cos(age * 1.3 + CFP[i]);
+    if (Y < 0.02 || !proj(X, Y, Z)) continue;
+    const sp = Math.floor(age * CFS[i] + CFP[i] * 3) & 3;
+    const ch = sp === 0 ? C_DASH : sp === 1 ? C_SL : sp === 2 ? C_PIPE : C_BS;
+    const k = CFR[i] ? hslk(356, 82, 52) : hslk(0, 0, 94);
+    put(PJX, PJY, ch, k, -PJZ);
+  }
+}
+
+function drawSwoosh(t) {
+  if (t < 8.0 || t > 8.4) return;
+  for (let k = 1; k <= 14; k++) {
+    const tk = t - k * 0.011;
+    if (tk < 7.95 || tk > 8.25) continue;
+    if (tk < 8.0) poseLeap(PTMP, tk); else poseSlam(PTMP, tk);
+    if (!proj(PTMP[0] + PTMP[4], PTMP[2] + PTMP[5], PTMP[1] + PTMP[6])) continue;
+    const q = k / 14;
+    put(PJX, PJY, q < 0.4 ? C_STAR : q < 0.75 ? C_PLUS : C_DOT, hslk(30, 30, 95, 1 - 0.8 * q), -PJZ + 0.3);
+  }
+}
+
+function drawPlay(g) {
+  const word = 'PLAY';
+  const pxW = 3, pxH = 2;
+  const totalPx = word.length * 5 + (word.length - 1);
+  const left = Math.round(cx - totalPx * pxW / 2);
+  const top = Math.round(rows * 0.5 - 7 * pxH / 2);
+  const tf = Math.floor(g * 9);
+  for (let l = 0; l < word.length; l++) {
+    const glyph = FONT57[word[l]];
+    for (let r = 0; r < 7; r++) {
+      for (let c = 0; c < 5; c++) {
+        if (glyph[r][c] !== '#') continue;
+        for (let sy = 0; sy < pxH; sy++) {
+          for (let sx = 0; sx < pxW; sx++) {
+            const ix = left + (l * 6 + c) * pxW + sx;
+            const iy = top + r * pxH + sy;
+            const h = h32(ix, iy, tf);
+            const ch = h < 0.1 ? C_AT : h < 0.17 ? C_STAR : C_HASH;
+            const L = 56 + 10 * Math.sin(g * 1.8 + ix * 0.12 - iy * 0.2) + (h < 0.1 ? 14 : 0);
+            put(ix + 0.5, iy + 0.5, ch, hslk(356, 70, L), 10);
+          }
+        }
+      }
+    }
+  }
+}
+const FONT57 = {
+  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+  A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..']
+};
+
+/* ------------------------------------------------------------------ */
+/* the scene                                                           */
+/* ------------------------------------------------------------------ */
+
+function drawScene(t) {
+  setCamera(t);
+  rayRows();
+  const E = excite(t);
+  const have = poseAt(PO, t);
+  let shX = 0, shZ = 0, shR = 0, shA = 0;
+  if (have) {
+    buildBody(PO);
+    shX = PO[0]; shZ = PO[1];
+    const lift = Math.max(0, (JY[J_AA] + JY[J_AB]) * 0.5 - 0.07);
+    shR = 0.55 + 0.3 * lift; shA = 0.55 / (1 + lift * 1.5);
+    if (t < 3.4) shA *= clamp01((t - 3.0) / 0.4);
+  }
+  drawBanks(t);
+  drawStands(t, E, shX, shZ);
+  drawFloor(t, shX, shZ, shR, shA);
+  drawBoard(t);
+  drawRim(t);
+  let bx = 0, by = -9, bz = 0, bsp = 0, ballOn = false;
+  if (ballFree(t)) { bx = BALLP[0]; by = BALLP[1]; bz = BALLP[2]; bsp = BALLP[3]; ballOn = true; }
+  else if (have && ballHeld(t)) {
+    bx = PO[0] + PO[16]; by = PO[2] + PO[17]; bz = PO[1] + PO[18]; bsp = -t * 9; ballOn = true;
+  }
+  drawNet(t, bx, by, bz, ballOn && by < RIM_Y + 0.05 && by > RIM_Y - 0.55 && Math.abs(bz - RIM_Z) < 0.3);
+  if (have) drawPlayer(t, t < 3.4 ? clamp01((t - 3.0) / 0.4) : 1);
+  if (ballOn) {
+    drawBall(bx, by, bz, bsp);
+    if (t < 3.22) {
+      for (let k = 1; k <= 18; k++) {
+        const tk = t - k * 0.012;
+        if (tk < 3.0) break;
+        ballFree(tk);
+        if (proj(BALLP[0], BALLP[1], BALLP[2])) put(PJX, PJY, k < 6 ? C_STAR : k < 12 ? C_PLUS : C_DOT, hslk(24, 80, 80, 1 - k / 19), -PJZ - 0.2);
+      }
+      if (proj(bx, by, bz)) addHalo(PJX, PJY, 4, 24, 80, 80, 0.5);
+    }
+  }
+  if (t >= 3.22 && t < 3.9) {
+    const u = (t - 3.22) / 0.68;
+    floorRing(0, 13.4, 0.3 + 2.2 * easeOutCubic(u), C_HASH, hslk(24, 70, 80, 1 - u));
+  }
+  if (t >= 10.05 && t < 10.6) {
+    const u = (t - 10.05) / 0.55;
+    floorRing(PO[0], PO[1], 0.25 + 1.0 * easeOutCubic(u), u < 0.5 ? C_COLON : C_DOT, hslk(31, 30, 70, 0.8 * (1 - u)));
+  }
+  drawSwoosh(t);
+  drawImpact(t);
+  drawConfetti(t);
+}
+
+/* ------------------------------------------------------------------ */
+/* rendering                                                           */
+/* ------------------------------------------------------------------ */
+
+function render() {
+  let n = 0;
+  const N = NCELL;
+  for (let i = 0; i < N; i++) {
+    if (chr[i]) sortBuf[n++] = clr[i] * N + i;
+  }
+  const sb = sortBuf.subarray(0, n);
+  sb.sort();
+  octx.setTransform(1, 0, 0, 1, 0, 0);
+  octx.globalCompositeOperation = 'source-over';
+  octx.globalAlpha = 1;
+  octx.clearRect(0, 0, off.width, off.height);
+  octx.font = FONT;
+  octx.textAlign = 'center';
+  octx.textBaseline = 'middle';
+  let last = -1;
+  for (let j = 0; j < n; j++) {
+    const v = sb[j];
+    const k = Math.floor(v / N);
+    const i = v - k * N;
+    if (k !== last) { octx.fillStyle = palStr(k); last = k; }
+    const iy = (i / cols) | 0;
+    octx.fillText(CHS[chr[i]], XP[i - iy * cols], YP[iy]);
+  }
+  mctx.setTransform(1, 0, 0, 1, 0, 0);
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.globalAlpha = 1;
+  mctx.drawImage(bgc, 0, 0);
+  mctx.drawImage(off, 0, 0);
+
+  actx.setTransform(1, 0, 0, 1, 0, 0);
+  actx.clearRect(0, 0, bloomA.width, bloomA.height);
+  if (FILTER_OK) actx.filter = 'blur(' + (0.006 * PW * DPR * 0.5).toFixed(2) + 'px)';
+  actx.drawImage(off, 0, 0, bloomA.width, bloomA.height);
+  if (FILTER_OK) actx.filter = 'none';
+
+  bctx.setTransform(1, 0, 0, 1, 0, 0);
+  bctx.clearRect(0, 0, bloomB.width, bloomB.height);
+  if (FILTER_OK) bctx.filter = 'blur(' + (0.02 * PW * DPR * 0.25).toFixed(2) + 'px)';
+  bctx.drawImage(off, 0, 0, bloomB.width, bloomB.height);
+  if (FILTER_OK) bctx.filter = 'none';
+
+  mctx.globalCompositeOperation = 'screen';
+  mctx.globalAlpha = 0.4;
+  mctx.drawImage(bloomA, 0, 0, cv.width, cv.height);
+  mctx.globalAlpha = 0.12;
+  mctx.drawImage(bloomB, 0, 0, cv.width, cv.height);
+  mctx.globalAlpha = 1;
+  mctx.globalCompositeOperation = 'source-over';
+}
+
+/* ------------------------------------------------------------------ */
+/* sound                                                               */
+/* ------------------------------------------------------------------ */
+
+let AC = null, BUS = null, NOISE = null;
+const DEG = [0, 2, 4, 7, 9];
+function NOTE(i) {
+  const o = Math.floor(i / 5);
+  const d = DEG[((i % 5) + 5) % 5];
+  return 523.25 * Math.pow(2, (d + 12 * o) / 12);
+}
+function initAudio() {
+  try {
+    if (!AC) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return;
+      AC = new Ctor();
+      const sr = AC.sampleRate;
+      NOISE = AC.createBuffer(1, Math.floor(sr * 2), sr);
+      const nd = NOISE.getChannelData(0);
+      for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+      const len = Math.floor(sr * 2.4);
+      const ir = AC.createBuffer(2, len, sr);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch);
+        for (let i = 0; i < len; i++) { const q = 1 - i / len; d[i] = (Math.random() * 2 - 1) * q * q * q; }
+      }
+      BUS = AC.createGain();
+      const dry = AC.createGain(); dry.gain.value = 0.85;
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.32;
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.ratio.value = 4;
+      const master = AC.createGain(); master.gain.value = 1.3;
+      BUS.connect(dry); dry.connect(comp);
+      BUS.connect(conv); conv.connect(wet); wet.connect(comp);
+      comp.connect(master); master.connect(AC.destination);
+    }
+    if (AC.state !== 'running') AC.resume();
+  } catch (e) { AC = null; }
+}
+function audioOK() { return !!AC && AC.state === 'running'; }
+function outNode(pan) {
+  if (!pan || !AC.createStereoPanner) return BUS;
+  const p = AC.createStereoPanner();
+  p.pan.value = Math.max(-1, Math.min(1, pan));
+  p.connect(BUS);
+  return p;
+}
+function bell(freq, at, vol, decay, pan) {
+  decay = decay || 1.4;
+  const out = outNode(pan);
+  const parts = [1, 2.76, 5.4], lv = [1, 0.2, 0.07];
+  for (let i = 0; i < 3; i++) {
+    const f = freq * parts[i];
+    if (f > 18000) continue;
+    const o = AC.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f, at);
+    const g = AC.createGain();
+    const dk = decay / (1 + i * 0.9);
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(vol * lv[i], at + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.004 + dk);
+    o.connect(g); g.connect(out);
+    o.start(at); o.stop(at + 0.004 + dk + 0.05);
+  }
+}
+function noiseBurst(at, dur, f0, f1, q, vol, attack, pan) {
+  const src = AC.createBufferSource();
+  src.buffer = NOISE; src.loop = true;
+  const bq = AC.createBiquadFilter();
+  bq.type = 'bandpass'; bq.Q.setValueAtTime(q, at);
+  bq.frequency.setValueAtTime(f0, at);
+  bq.frequency.exponentialRampToValueAtTime(f1, at + dur);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(vol, at + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  src.connect(bq); bq.connect(g); g.connect(outNode(pan));
+  src.start(at, Math.random() * 1.5);
+  src.stop(at + dur + 0.05);
+}
+function glide(type, f0, f1, at, dur, vol, attack, pan) {
+  const o = AC.createOscillator();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, at);
+  o.frequency.exponentialRampToValueAtTime(f1, at + dur);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(vol, at + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g); g.connect(outNode(pan));
+  o.start(at); o.stop(at + dur + 0.05);
+}
+function pad(freq, at, vol, attack, dur) {
+  const o = AC.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(freq, at);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(vol, at + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g); g.connect(BUS);
+  o.start(at); o.stop(at + dur + 0.05);
+}
+let crowdSrc = null, crowdGain = null;
+function startCrowd(at) {
+  stopCrowd();
+  const src = AC.createBufferSource();
+  src.buffer = NOISE; src.loop = true;
+  const b1 = AC.createBiquadFilter(); b1.type = 'bandpass'; b1.frequency.setValueAtTime(650, at); b1.Q.setValueAtTime(0.8, at);
+  const b2 = AC.createBiquadFilter(); b2.type = 'bandpass'; b2.frequency.setValueAtTime(1700, at); b2.Q.setValueAtTime(1.2, at);
+  const g2 = AC.createGain(); g2.gain.setValueAtTime(0.5, at);
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0, at);
+  src.connect(b1); src.connect(b2); b2.connect(g2);
+  b1.connect(g); g2.connect(g); g.connect(BUS);
+  src.start(at, Math.random());
+  crowdSrc = src; crowdGain = g;
+}
+function stopCrowd() {
+  if (!crowdSrc || !AC) return;
+  const now = AC.currentTime;
+  try {
+    crowdGain.gain.cancelScheduledValues(now);
+    crowdGain.gain.setTargetAtTime(0.0001, now, 0.08);
+    crowdSrc.stop(now + 0.7);
+  } catch (e) { }
+  crowdSrc = null; crowdGain = null;
+}
+function clang(at, f, vol, decay, pan) {
+  bell(f, at, vol, decay, pan);
+  bell(f * 1.47, at + 0.002, vol * 0.45, decay * 0.7, pan);
+  bell(f * 2.09, at + 0.004, vol * 0.25, decay * 0.5, pan);
+}
+function thump(at, f0, f1, dur, vol) {
+  glide('sine', f0, f1, at, dur, vol, 0.004, 0);
+  noiseBurst(at, 0.03, 1800, 1500, 2, vol * 0.18, 0.002, 0);
+}
+
+const CUES = [
+  [0.5, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 1.0, 250, 2400, 1.2, 0.09, 0.25, 0);
+    glide('sine', 70, 140, n, 1.0, 0.08, 0.2, 0);
+  }],
+  [1.1, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 0.5, 7000, 9000, 2, 0.03, 0.1, 0);
+    bell(NOTE(10), n, 0.05, 1.2, -0.5);
+    bell(NOTE(12), n + 0.2, 0.05, 1.2, 0.5);
+  }],
+  [1.4, function () {
+    const n = AC.currentTime + 0.005;
+    glide('sine', 500, 1000, n, 0.4, 0.05, 0.1, 0);
+    clang(n + 0.4, 620, 0.12, 1.6, 0);
+  }],
+  [1.8, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 0.6, 3200, 1800, 1.5, 0.05, 0.12, 0);
+  }],
+  [2.4, function () {
+    const n = AC.currentTime + 0.005;
+    startCrowd(n);
+    const ch = [0, 2, 4];
+    for (let k = 0; k < 3; k++) bell(NOTE(ch[k]), n + k * 0.05, 0.05, 1.6, (k - 1) * 0.5);
+  }],
+  [3.0, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 0.22, 600, 3000, 2, 0.1, 0.12, -0.6);
+    glide('sine', 300, 900, n + 0.18, 0.08, 0.12, 0.004, 0);
+    thump(n + 0.22, 160, 70, 0.14, 0.25);
+    bell(NOTE(5), n + 0.22, 0.08, 1.2, -0.2);
+    bell(NOTE(7), n + 0.24, 0.08, 1.2, 0.2);
+  }],
+  [6.6, function () {
+    const n = AC.currentTime + 0.005;
+    for (let k = 0; k < 2; k++) {
+      const at = n + k * 0.3;
+      glide('sine', 2100, 2900, at, 0.09, 0.05, 0.01, k ? 0.3 : -0.3);
+      noiseBurst(at, 0.06, 3000, 2800, 3, 0.04, 0.005, 0);
+      thump(at + 0.02, 120, 55, 0.18, 0.3);
+    }
+  }],
+  [7.2, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 0.8, 300, 1800, 1.0, 0.08, 0.5, 0);
+    glide('sine', 90, 180, n, 0.8, 0.1, 0.3, 0);
+  }],
+  [8.0, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 0.12, 1500, 4000, 1.5, 0.1, 0.06, 0);
+    const at = n + 0.12;
+    glide('sine', 120, 38, at, 0.6, 0.7, 0.004, 0);
+    clang(at, 410, 0.22, 2.2, 0);
+    noiseBurst(at, 0.35, 4200, 1400, 1.2, 0.14, 0.01, 0);
+    const ch = [0, 4, 7];
+    for (let k = 0; k < 3; k++) bell(NOTE(ch[k]), at + 0.03 + k * 0.01, 0.08, 2.0, (k - 1) * 0.6);
+  }],
+  [8.25, function () {
+    const n = AC.currentTime + 0.005;
+    for (let k = 0; k < 5; k++) clang(n + k * 0.085, 380 + 20 * k, 0.09 * (1 - k * 0.17), 0.35, (k % 2 ? 0.3 : -0.3));
+  }],
+  [8.55, function () {
+    const n = AC.currentTime + 0.005;
+    thump(n, 140, 60, 0.15, 0.45);
+  }],
+  [9.6, function () {
+    const n = AC.currentTime + 0.005;
+    glide('sine', 300, 220, n, 0.3, 0.05, 0.01, 0);
+    clang(n, 400, 0.05, 0.6, 0);
+    bell(NOTE(2), n + 0.05, 0.05, 1.0, 0);
+  }],
+  [10.05, function () {
+    const n = AC.currentTime + 0.005;
+    thump(n, 110, 45, 0.3, 0.5);
+    glide('sine', 2200, 2700, n + 0.02, 0.07, 0.04, 0.01, 0.2);
+    noiseBurst(n, 0.4, 600, 300, 0.8, 0.05, 0.02, 0);
+  }],
+  [10.6, function () {
+    const n = AC.currentTime + 0.005;
+    noiseBurst(n, 0.3, 900, 4000, 0.8, 0.08, 0.02, 0);
+    for (let k = 0; k < 12; k++) {
+      bell(NOTE(8 + Math.floor(Math.random() * 7)), n + 0.05 + k * 0.11, 0.045, 1.0, Math.random() * 1.6 - 0.8);
+    }
+  }]
+];
+for (let k = 0; k < 7; k++) {
+  CUES.push([0.05 + 0.065 * k, function () {
+    const n = AC.currentTime + 0.005;
+    thump(n, 95, 42, 0.25, 0.22);
+    bell(NOTE(-5 + k), n, 0.03, 0.8, -0.75 + k * 0.25);
+  }]);
+}
+CUES.sort(function (a, b) { return a[0] - b[0]; });
+
+let lastBounce = 0, lastStepN = 0;
+function runAudio(prevT, t) {
+  for (let c = 0; c < CUES.length; c++) {
+    const ct = CUES[c][0];
+    if (prevT < ct && t >= ct) {
+      if (audioOK()) { try { CUES[c][1](); } catch (e) { } }
+    }
+  }
+  if (t >= 3.4 && t < 6.6) {
+    const ph = runPhase(t);
+    const bi = Math.floor(ph / TAU + 0.5);
+    const si = Math.floor((ph - Math.PI / 2) / Math.PI) + 1;
+    poseRun(PTMP, t);
+    const near = clamp01(4 / Math.max(1, PTMP[1] - camZ));
+    if (audioOK()) {
+      const n = AC.currentTime + 0.005;
+      while (lastBounce < bi) {
+        lastBounce++;
+        thump(n, 150, 65, 0.12, 0.12 + 0.3 * near);
+      }
+      while (lastStepN < si) {
+        lastStepN++;
+        noiseBurst(n, 0.05, 2600, 2400, 3, 0.012 + 0.03 * near, 0.005, lastStepN % 2 ? 0.2 : -0.2);
+      }
+    } else { lastBounce = bi; lastStepN = si; }
+  }
+  if (crowdGain && audioOK()) {
+    const E = excite(t);
+    crowdGain.gain.setTargetAtTime(0.0001 + 0.13 * Math.pow(E, 1.6), AC.currentTime, 0.12);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* clock, state and input                                              */
+/* ------------------------------------------------------------------ */
+
+let state = 'start';
+let paused = false, pauseAt = 0, pausedTotal = 0;
+const T0 = performance.now();
+let filmStart = 0, prevT = -1;
+function gnow() { return ((paused ? pauseAt : performance.now()) - T0 - pausedTotal) / 1000; }
+function filmT() { return gnow() - filmStart; }
+
+function startFilm() {
+  initAudio();
+  if (paused) togglePause();
+  state = 'play';
+  filmStart = gnow();
+  prevT = -0.001;
+  lastBounce = 0; lastStepN = 0;
+  if (AC) stopCrowd();
+  cv.style.cursor = 'none';
+  dirty = true;
+}
+function togglePause() {
+  const now = performance.now();
+  if (paused) {
+    pausedTotal += now - pauseAt;
+    paused = false;
+    if (AC && AC.state === 'suspended') AC.resume();
+  } else {
+    pauseAt = now;
+    paused = true;
+    if (AC && AC.state === 'running') AC.suspend();
+  }
+  dirty = true;
+}
+window.addEventListener('click', function () {
+  if (state === 'start') startFilm();
+  else if (filmT() >= FILM_END) startFilm();
+});
+window.addEventListener('keydown', function (e) {
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();
+    if (state === 'start') startFilm();
+    else togglePause();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (state === 'start' || filmT() >= FILM_END) startFilm();
+  } else if (e.key === 'r' || e.key === 'R') {
+    if (state === 'play') startFilm();
+  }
+});
+window.addEventListener('resize', layout);
+
+function frame() {
+  requestAnimationFrame(frame);
+  if (paused && !dirty) return;
+  dirty = false;
+  const g = gnow();
+  hf = Math.floor(g * 9);
+  haloN = 0;
+  clearGrid();
+  if (state === 'start') {
+    setCamera(0);
+    drawDust(g);
+    drawPlay(g);
+  } else {
+    const t = g - filmStart;
+    setCamera(t);
+    drawDust(g);
+    drawScene(t);
+    if (!paused) runAudio(prevT, t);
+    prevT = t;
+  }
+  applyHalos(hf);
+  render();
+}
+
+layout();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

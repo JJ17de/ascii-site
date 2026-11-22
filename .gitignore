@@ -1,0 +1,10 @@
+bin/
+build/
+dist/
+tests/frames/
+.venv/
+__pycache__/
+*.pyc
+server/web/*
+!server/web/.gitkeep
+.DS_Store
