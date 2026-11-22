@@ -81,7 +81,7 @@
     {
       "name": "This site",
       "stack": "C++ - Python - Go",
-      "text": "A canvas-only ASCII site. A C++ engine generates the banners and the 3D network scene, a Python builder inlines everything into one self-contained page, and a Go server serves it with strict CSP and Prometheus metrics.",
+      "text": "A canvas-only ASCII site. A C++ engine generates the banners and the 3D supernova scene, a Python builder inlines everything into one self-contained page, and a Go server serves it with strict CSP and Prometheus metrics.",
       "href": ""
     },
     {

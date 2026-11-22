@@ -113,7 +113,7 @@ function layout() {
   bloomB.width = Math.max(1, cv.width >> 2); bloomB.height = Math.max(1, cv.height >> 2);
   bgc.width = cv.width; bgc.height = cv.height;
   const gr = bgctx.createLinearGradient(0, 0, 0, bgc.height);
-  gr.addColorStop(0, '#323a47'); gr.addColorStop(0.55, '#394250'); gr.addColorStop(0.86, '#4b5463'); gr.addColorStop(1, '#666e7d');
+  gr.addColorStop(0, '#02030a'); gr.addColorStop(0.5, '#060a1a'); gr.addColorStop(0.82, '#100c26'); gr.addColorStop(1, '#1c1035');
   bgctx.fillStyle = gr; bgctx.fillRect(0, 0, bgc.width, bgc.height);
   XP = new Float32Array(cols); YP = new Float32Array(rows);
   for (let i = 0; i < cols; i++) XP[i] = (gridX0 + (i + 0.5) * CW) * DPR;
@@ -202,7 +202,7 @@ function render() {
 const ST_BODY = 0, ST_DIM = 1, ST_GOLD = 2, ST_LINK = 3, ST_ROLE = 4, ST_ORG = 5, ST_DATE = 6, ST_TAG = 7;
 const ST_RAIL = 8, ST_BORDER = 9, ST_BANNER = 10, ST_SHADOW = 11, ST_BULLET = 12, ST_TITLE = 13, ST_BRACKET = 14;
 const STYLE = [
-  [220, 16, 84], [220, 12, 60], [44, 66, 76], [160, 58, 68], [210, 20, 94], [40, 62, 66], [205, 26, 62], [0, 0, 0],
+  [220, 20, 86], [225, 14, 62], [44, 66, 76], [190, 70, 70], [210, 20, 94], [40, 62, 66], [205, 26, 62], [0, 0, 0],
   [220, 16, 42], [220, 14, 48], [44, 66, 78], [220, 20, 30], [44, 66, 70], [44, 40, 88], [220, 12, 50]
 ];
 
@@ -740,27 +740,68 @@ function sfx(kind, n) {
 /* ------------------------------------------------------------------ */
 
 const rng = mulberry32(31337);
-const DUSTN = 260;
-const DU = new Float32Array(DUSTN), DY = new Float32Array(DUSTN), DV = new Float32Array(DUSTN), DA = new Float32Array(DUSTN), DPH = new Float32Array(DUSTN);
-const DK = new Int32Array(DUSTN);
-for (let i = 0; i < DUSTN; i++) {
-  DU[i] = -1.5 + 4 * rng(); DY[i] = rng(); const d = rng();
-  DV[i] = 0.008 + 0.02 * d; DA[i] = 0.08 + 0.26 * d; DPH[i] = rng() * TAU; DK[i] = rgbk(248, 250, 255, DA[i]);
+
+/* starfield: three parallax layers of twinkling stars, plus shooting stars */
+const STARN = 420;
+const SU = new Float32Array(STARN), SY = new Float32Array(STARN), SD = new Float32Array(STARN);
+const SB = new Float32Array(STARN), SF = new Float32Array(STARN), SPH = new Float32Array(STARN), SHUE = new Float32Array(STARN), SSAT = new Float32Array(STARN);
+for (let i = 0; i < STARN; i++) {
+  SU[i] = -1.5 + 4 * rng(); SY[i] = rng();
+  const d = rng(); SD[i] = d * d;
+  SB[i] = 0.25 + 0.75 * Math.pow(rng(), 2.2);
+  SF[i] = 0.6 + 2.4 * rng(); SPH[i] = rng() * TAU;
+  const c = rng();
+  SHUE[i] = c < 0.55 ? 215 : c < 0.8 ? 45 : c < 0.92 ? 270 : 10;
+  SSAT[i] = c < 0.55 ? 45 : 60;
 }
-function drawDust(t) {
+let starHalos = 0;
+function drawStars(t) {
   const span = rows + 2;
-  for (let i = 0; i < DUSTN; i++) {
-    const x = stage0 + DU[i] * stageCols + Math.sin(t * 0.4 + DPH[i]) * 0.6;
+  starHalos = 0;
+  for (let i = 0; i < STARN; i++) {
+    const x = stage0 + SU[i] * stageCols;
     if (x < 0 || x >= cols) continue;
-    let y = DY[i] + t * DV[i] - scrollPos * 0.15 * DV[i] / 0.02 / span;
+    let y = SY[i] - scrollPos * (0.02 + 0.25 * SD[i]) / span;
     y -= Math.floor(y);
-    put(x, y * span - 1, C_PLUS, DK[i], -1e7 + DA[i]);
+    const tw = REDUCED ? 1 : 0.55 + 0.45 * Math.sin(t * SF[i] + SPH[i]);
+    const b = SB[i] * tw;
+    const ch = b > 0.82 ? C_STAR : b > 0.5 ? C_PLUS : C_DOT;
+    const k = hslk(SHUE[i], SSAT[i], 62 + 34 * b, 0.25 + 0.75 * b);
+    put(x, y * span - 1, ch, k, -1e7 + b);
+    if (b > 0.9 && starHalos < 12) { addHalo(x, y * span - 1, 1.8, SHUE[i], 40, 85, 0.35); starHalos++; }
+  }
+  if (REDUCED) return;
+  for (let s = 0; s < 2; s++) {
+    const period = 6.5 + s * 2.3;
+    const cyc = Math.floor((t + s * 3.1) / period);
+    const u = ((t + s * 3.1) - cyc * period) / 0.9;
+    if (u < 0 || u > 1) continue;
+    const x0 = stage0 + (0.1 + 0.8 * h32(cyc, s, 1)) * stageCols, y0 = rows * (0.05 + 0.35 * h32(cyc, s, 2));
+    const dir = h32(cyc, s, 3) < 0.5 ? -1 : 1;
+    const len = 18 + 14 * h32(cyc, s, 4);
+    const hx = x0 + dir * len * u, hy = y0 + len * u * 0.45 * AR * 1.6;
+    for (let k = 0; k < 14; k++) {
+      const f = k / 14;
+      const tx = hx - dir * f * 9, ty = hy - f * 9 * 0.45 * AR * 1.6;
+      put(tx, ty, k === 0 ? C_STAR : k < 5 ? C_DASH : C_DOT, hslk(200, 40, 95 - 30 * f, (1 - f) * Math.sin(Math.PI * u)), -1e6);
+    }
+    addHalo(hx, hy, 2.2, 200, 40, 90, 0.5 * Math.sin(Math.PI * u));
   }
 }
 
+/* supernova remnant built from the C++ scene: knots = nodes, filaments = edges, nebula = shell */
 const SH = ASSETS.constellation.shell, ND = ASSETS.constellation.nodes, ED = ASSETS.constellation.edges;
-const CL_HUE = [160, 42, 318];
+const KNOT_HUE = [340, 178, 28];
 const PROJ = new Float32Array(ND.length * 3);
+const SHN = new Float32Array(SH.length * 4);
+for (let i = 0; i < SH.length; i++) {
+  const p = SH[i];
+  const n = 0.78 + 0.42 * h32(Math.round(p[0] * 7), Math.round(p[1] * 7), Math.round(p[2] * 7)) + 0.08 * (h32(i, 5, 5) - 0.5);
+  SHN[i * 4] = p[0] * n + 0.06 * (h32(i, 1, 9) - 0.5);
+  SHN[i * 4 + 1] = p[1] * n + 0.06 * (h32(i, 2, 9) - 0.5);
+  SHN[i * 4 + 2] = p[2] * n + 0.06 * (h32(i, 3, 9) - 0.5);
+  SHN[i * 4 + 3] = h32(i, 4, 9);
+}
 function projPoint(x, y, z, rot, tilt, R, gx, gy, out, o) {
   const cr = Math.cos(rot), sr = Math.sin(rot), ct = Math.cos(tilt), st = Math.sin(tilt);
   const x1 = x * cr + z * sr, z1 = -x * sr + z * cr;
@@ -769,30 +810,60 @@ function projPoint(x, y, z, rot, tilt, R, gx, gy, out, o) {
   out[o] = gx + x1 * R * s; out[o + 1] = gy - y2 * R * s * AR; out[o + 2] = z2;
 }
 const PTMP = new Float32Array(3);
-function drawGlobe(t, introT) {
-  const gx = cxs, gy = HERO.globeRow - scrollRow, R = HERO.globeR;
-  if (gy + R * AR < 0) return;
-  const spin = REDUCED ? 0.05 : 0.22;
-  const intro = REDUCED ? 1 : easeOutCubic((introT - 0.35) / 1.1);
-  if (intro <= 0) return;
-  const rot = t * spin + (1 - intro) * 2.5, tilt = 0.38;
-  const ks = [];
-  for (let i = 0; i < 4; i++) ks.push(hslk(205, 20, 40 + 10 * i, 0.12 + 0.1 * i));
-  for (let i = 0; i < SH.length; i += 1) {
-    const p = SH[i];
-    projPoint(p[0], p[1], p[2], rot, tilt, R * intro, gx, gy, PTMP, 0);
-    const d = PTMP[2];
-    if (d < -0.2 && (i & 1)) continue;
-    const q = Math.min(3, Math.max(0, Math.floor((d + 1) * 2)));
-    put(PTMP[0], PTMP[1], C_DOT, ks[q], d * 10 - 20);
+function ring3(gx, gy, R, rot, tilt, radius, ch, k, z) {
+  const n = Math.max(24, Math.ceil(radius * R * 6));
+  for (let i = 0; i < n; i++) {
+    const a = i / n * TAU;
+    projPoint(Math.cos(a) * radius, 0, Math.sin(a) * radius, rot, tilt, R, gx, gy, PTMP, 0);
+    put(PTMP[0], PTMP[1], ch, k, PTMP[2] * 10 + z);
   }
-  const edgeA = REDUCED ? 1 : clamp01((introT - 1.05) / 0.5);
+}
+function drawSupernova(t, introT) {
+  const gx = cxs, gy = HERO.globeRow - scrollRow, R = HERO.globeR;
+  if (gy + R * AR * 1.5 < 0) return;
+  const it = REDUCED ? 99 : introT;
+  if (it < 0.35) return;
+  const BOOM = 0.95;
+  if (it < BOOM) {
+    const u = (it - 0.35) / (BOOM - 0.35);
+    const swell = u < 0.7 ? 1 + 1.6 * (u / 0.7) : 2.6 * (1 - (u - 0.7) / 0.3) + 0.2;
+    const rr = swell * 1.4;
+    for (let dy = -Math.ceil(rr * AR); dy <= Math.ceil(rr * AR); dy++) {
+      for (let dx = -Math.ceil(rr); dx <= Math.ceil(rr); dx++) {
+        const d = Math.sqrt(dx * dx + (dy / AR) * (dy / AR));
+        if (d > rr) continue;
+        put(gx + dx, gy + dy, d < rr * 0.5 ? C_AT : C_HASH, hslk(u < 0.7 ? 20 + 25 * u : 210, 80, 60 + 30 * u), 40);
+      }
+    }
+    addHalo(gx, gy, 3 + 5 * swell, u < 0.7 ? 25 : 210, 70, 85, 0.6);
+    return;
+  }
+  const since = it - BOOM;
+  const grow = REDUCED ? 1 : easeOutCubic(since / 1.1);
+  const rot = t * (REDUCED ? 0.02 : 0.08), tilt = 0.42;
+  if (since < 0.9) {
+    const f = 1 - since / 0.9;
+    addHalo(gx, gy, 6 + 22 * (1 - f), 45, 30, 98, 0.9 * f);
+    const sr = (0.15 + 1.5 * easeOutCubic(since / 0.9));
+    ring3(gx, gy, R, rot, tilt, sr, C_HASH, hslk(200, 50, 96, f), 30);
+  }
+  for (let i = 0; i < SH.length; i++) {
+    if (SHN[i * 4 + 3] > 0.55) continue;
+    const breathe = grow * (1 + 0.03 * Math.sin(t * 0.7 + SHN[i * 4 + 3] * 6));
+    projPoint(SHN[i * 4], SHN[i * 4 + 1], SHN[i * 4 + 2], rot, tilt, R * breathe, gx, gy, PTMP, 0);
+    const d = PTMP[2];
+    const ang = Math.atan2(SHN[i * 4 + 1], SHN[i * 4]) / TAU + 0.5;
+    const hue = 280 + 80 * Math.sin(ang * TAU + t * 0.1);
+    const front = d > -0.2;
+    put(PTMP[0], PTMP[1], SHN[i * 4 + 3] < 0.12 ? C_COLON : C_DOT, hslk(hue, 70, front ? 58 + 12 * d : 36, front ? 0.62 : 0.3), d * 10 - 20);
+  }
   for (let i = 0; i < ND.length; i++) {
     const n = ND[i];
-    const fly = REDUCED ? 1 : easeOutCubic((introT - 0.35 - h32(i, 7, 1) * 0.5) / 0.6);
-    const sx = (h32(i, 1, 2) - 0.5) * 6, sy = (h32(i, 2, 2) - 0.5) * 6, sz = (h32(i, 3, 2) - 0.5) * 6;
-    projPoint(sx + (n[0] - sx) * fly, sy + (n[1] - sy) * fly, sz + (n[2] - sz) * fly, rot, tilt, R, gx, gy, PROJ, i * 3);
+    const fly = REDUCED ? 1 : easeOutCubic((since - h32(i, 7, 1) * 0.25) / 1.0);
+    const k = Math.max(0, fly) * (1 + 0.04 * Math.sin(t * 0.9 + i));
+    projPoint(n[0] * k, n[1] * k, n[2] * k, rot, tilt, R, gx, gy, PROJ, i * 3);
   }
+  const edgeA = REDUCED ? 1 : clamp01((since - 0.6) / 0.8);
   if (edgeA > 0) {
     for (let e = 0; e < ED.length; e++) {
       const a = ED[e][0], b = ED[e][1];
@@ -800,42 +871,62 @@ function drawGlobe(t, introT) {
       const bx = PROJ[b * 3], by = PROJ[b * 3 + 1], bz = PROJ[b * 3 + 2];
       const dx = bx - ax, dy = (by - ay) / AR;
       const len = Math.sqrt(dx * dx + dy * dy);
-      const n = Math.max(2, Math.ceil(len / 0.7));
+      const n = Math.max(2, Math.ceil(len / 0.8));
       const adx = Math.abs(dx), ady = Math.abs(dy);
       const c = adx < 0.4 * ady ? C_PIPE : ady < 0.4 * adx ? C_DASH : ((dx > 0) === (dy > 0) ? C_BS : C_SL);
-      const hue = ND[a][3] === ND[b][3] ? CL_HUE[ND[a][3]] : 200;
+      const hue = KNOT_HUE[ND[a][3]];
       for (let s = 1; s < n; s++) {
         const f = s / n, z = az + (bz - az) * f;
+        if (h32(e, s, 3) < 0.3) continue;
         const front = z > -0.1;
-        const k = hslk(hue, front ? 40 : 25, front ? 46 + 14 * z : 30, (front ? 0.75 : 0.35) * edgeA);
-        put(ax + dx * f, ay + (by - ay) * f, front ? c : C_DOT, k, z * 10 - 5);
+        put(ax + dx * f, ay + (by - ay) * f, front && h32(e, s, 4) < 0.6 ? c : C_DOT,
+          hslk(hue, front ? 65 : 40, front ? 48 + 12 * z : 30, (front ? 0.7 : 0.3) * edgeA), z * 10 - 5);
       }
     }
   }
   for (let i = 0; i < ND.length; i++) {
-    const z = PROJ[i * 3 + 2], hue = CL_HUE[ND[i][3]];
+    const z = PROJ[i * 3 + 2], hue = KNOT_HUE[ND[i][3]];
     const front = z > 0;
-    put(PROJ[i * 3], PROJ[i * 3 + 1], front ? C_AT : C_o, hslk(hue, 60, front ? 62 + 14 * z : 40), z * 10);
+    const tw = 0.75 + 0.25 * Math.sin(t * 2.1 + i * 1.7);
+    put(PROJ[i * 3], PROJ[i * 3 + 1], front ? (i % 7 === 0 ? C_STAR : C_AT) : C_o, hslk(hue, 75, (front ? 58 + 16 * z : 38) * tw), z * 10);
   }
-  if (edgeA >= 1 && !REDUCED) {
-    for (let k = 0; k < 14; k++) {
-      const sp = 0.35 + 0.5 * h32(k, 9, 9);
-      const u = t * sp + h32(k, 3, 3) * 7;
-      const cyc = Math.floor(u), f = u - cyc;
-      const e = Math.floor(h32(k, cyc, 5) * ED.length);
-      const a = ED[e][0], b = ED[e][1];
-      for (let tr = 0; tr < 4; tr++) {
-        const ff = f - tr * 0.06;
-        if (ff < 0) break;
-        const x = PROJ[a * 3] + (PROJ[b * 3] - PROJ[a * 3]) * ff;
-        const y = PROJ[a * 3 + 1] + (PROJ[b * 3 + 1] - PROJ[a * 3 + 1]) * ff;
-        const z = PROJ[a * 3 + 2] + (PROJ[b * 3 + 2] - PROJ[a * 3 + 2]) * ff;
-        if (z < -0.15) break;
-        put(x, y, tr === 0 ? C_STAR : tr === 1 ? C_PLUS : C_DOT, hslk(CL_HUE[ND[a][3]], 70, 88 - tr * 12, 1 - tr * 0.22), z * 10 + 3);
-        if (tr === 0) addHalo(x, y, 2.4, CL_HUE[ND[a][3]], 60, 80, 0.45);
+  if (!REDUCED) {
+    for (let r = 0; r < 2; r++) {
+      let u = (t * 0.25 + r * 0.5) % 1;
+      const rad = 0.25 + 1.15 * u;
+      ring3(gx, gy, R, rot * 0.5 + r, tilt, rad * grow, u < 0.5 ? C_DASH : C_DOT, hslk(195, 55, 88, 0.85 * (1 - u)), 2);
+    }
+    for (let k = 0; k < 40; k++) {
+      const life = 2.6 + 1.4 * h32(k, 1, 1);
+      const u = ((t + h32(k, 2, 2) * life) % life) / life;
+      const cyc = Math.floor((t + h32(k, 2, 2) * life) / life);
+      const th = h32(k, cyc, 3) * TAU, ph = Math.acos(2 * h32(k, cyc, 4) - 1);
+      const rr = 0.1 + 1.35 * u;
+      projPoint(Math.sin(ph) * Math.cos(th) * rr, Math.cos(ph) * rr, Math.sin(ph) * Math.sin(th) * rr, rot, tilt, R * grow, gx, gy, PTMP, 0);
+      put(PTMP[0], PTMP[1], u < 0.3 ? C_STAR : u < 0.65 ? C_PLUS : C_DOT, hslk(35, 80, 85 - 30 * u, 1 - u), PTMP[2] * 10 + 1);
+    }
+    const ba = t * 1.3;
+    for (let side = -1; side <= 1; side += 2) {
+      for (let s = 2; s < 26; s++) {
+        const f = s / 26;
+        const bx = Math.cos(ba) * f * 1.25 * side, by = 0.92 * f * side, bz = Math.sin(ba) * f * 1.25 * side;
+        projPoint(bx, by, bz, rot, tilt, R * grow, gx, gy, PTMP, 0);
+        if (h32(s, side, Math.floor(t * 9)) < 0.25) continue;
+        put(PTMP[0], PTMP[1], s < 8 ? C_PIPE : C_COLON, hslk(190, 70, 92 - 40 * f, 0.85 - 0.7 * f), PTMP[2] * 10 + 8);
       }
     }
   }
+  const pulse = 0.75 + 0.25 * Math.sin(t * 5.2);
+  const cr = (2.2 + 0.5 * pulse) * Math.max(0.3, grow);
+  for (let dy = -Math.ceil(cr * AR); dy <= Math.ceil(cr * AR); dy++) {
+    for (let dx = -Math.ceil(cr); dx <= Math.ceil(cr); dx++) {
+      const d = Math.sqrt(dx * dx + (dy / AR) * (dy / AR)) / cr;
+      if (d > 1) continue;
+      const ch = d < 0.25 ? C_AT : d < 0.55 ? C_HASH : d < 0.8 ? C_STAR : C_PLUS;
+      put(gx + dx, gy + dy, ch, hslk(48 - 20 * d, 40 + 50 * d, 98 - 26 * d * pulse), 60 - d);
+    }
+  }
+  addHalo(gx, gy, cr + 5 + 2 * pulse, 40, 70, 90, 0.8);
 }
 
 function drawBanner(B, introT, revealStart, gold) {
@@ -853,7 +944,7 @@ function drawBanner(B, introT, revealStart, gold) {
         continue;
       }
       if (sy >= NAVROWS || scrollRow === 0) {
-        put(x + 1.5, sy + 1.5, C_DOT, hslk(220, 20, 26), 15);
+        put(x + 1.5, sy + 1.5, C_DOT, hslk(260, 30, 28), 15);
         const L = (gold ? 84 : 80) - r * 2.5;
         const ch = h32(x, r, Math.floor(introT * 2)) < 0.06 ? C_AT : C_HASH;
         put(x + 0.5, sy + 0.5, ch, hslk(44, gold ? 66 : 50, L), 20);
@@ -870,7 +961,7 @@ function drawTextAt(row, col, s, k, z, typeT, t) {
     const c = s.charCodeAt(i);
     if (c !== 32) put(col + i + 0.5, sy + 0.5, c, k, 20);
   }
-  if (!REDUCED && n < s.length && n >= 0 && t > typeT) put(col + n + 0.5, sy + 0.5, C_HASH, hslk(160, 60, 70), 21);
+  if (!REDUCED && n < s.length && n >= 0 && t > typeT) put(col + n + 0.5, sy + 0.5, C_HASH, hslk(195, 60, 75), 21);
 }
 
 function styleKey(st, hue, hot) {
@@ -901,7 +992,7 @@ function drawDoc(t) {
           const delay = Math.min(0.6, 0.004 * (x - c0) + 0.015 * (dr - S.row));
           if (rt < 0 || t < rt + delay) continue;
           if (t < rt + delay + 0.22) {
-            put(x + 0.5, sy + 0.5, code(SCRAMBLE[(h32(x, dr, Math.floor(t * 18)) * SCRAMBLE.length) | 0]), hslk(160, 30, 55, 0.75), 10);
+            put(x + 0.5, sy + 0.5, code(SCRAMBLE[(h32(x, dr, Math.floor(t * 18)) * SCRAMBLE.length) | 0]), hslk(200, 40, 60, 0.75), 10);
             continue;
           }
         }
@@ -944,17 +1035,17 @@ function drawNav(t, introT) {
     let s = R.s, k;
     const hot = hoverNav === R;
     if (R.kind === 'top') {
-      k = hslk(160, 50, 66, a);
+      k = hslk(195, 55, 70, a);
       for (let j = 0; j < s.length; j++) put(R.c0 + j + 0.5, R.row + 0.5, s.charCodeAt(j), k, 60);
-      if (Math.floor(t * 1.6) % 2 === 0) put(R.c0 + s.length + 1.5, R.row + 0.5, C_HASH, hslk(160, 50, 66, a), 60);
+      if (Math.floor(t * 1.6) % 2 === 0) put(R.c0 + s.length + 1.5, R.row + 0.5, C_HASH, hslk(195, 55, 70, a), 60);
       continue;
     }
     if (R.kind === 'nav') {
       const on = R.idx === act;
       if (!R.menu) s = on ? '[' + R.s + ']' : ' ' + R.s + ' ';
-      k = on ? hslk(44, 66, 78, a) : hot ? hslk(160, 60, 80, a) : hslk(220, 14, 66, a);
+      k = on ? hslk(44, 66, 78, a) : hot ? hslk(195, 60, 82, a) : hslk(220, 14, 66, a);
       if (on && !R.menu) addHalo(R.c0 + s.length / 2, R.row + 0.5, 3, 44, 60, 80, 0.35);
-    } else k = hot ? hslk(160, 60, 80, a) : hslk(220, 14, 62, a);
+    } else k = hot ? hslk(195, 60, 82, a) : hslk(220, 14, 62, a);
     for (let j = 0; j < s.length; j++) {
       const c = s.charCodeAt(j);
       if (c !== 32) put(R.c0 + j + 0.5, R.row + 0.5, c, k, 60);
@@ -967,20 +1058,20 @@ function drawHero(t, introT) {
   if (scrollRow > heroRows) return;
   if (!REDUCED && introT < 0.65) {
     const y = (introT - 0.05) / 0.55 * rows;
-    const k = hslk(160, 40, 70, 0.7);
+    const k = hslk(200, 60, 80, 0.7);
     for (let x = stage0; x < stage0 + stageCols; x++) put(x + 0.5, y, C_DASH, k, 30);
   }
-  drawGlobe(t, introT);
+  drawSupernova(t, introT);
   for (let i = 0; i < HERO.banner.length; i++) drawBanner(HERO.banner[i], introT, 1.25 + i * 0.12, false);
   drawTextAt(HERO.title.row, HERO.title.col, HERO.title.s, hslk(44, 40, 88), 20, 1.9, introT);
   for (let i = 0; i < HERO.tagline.length; i++) {
     const L = HERO.tagline[i];
     drawTextAt(L.row, L.col, L.s, hslk(220, 16, 74), 20, 2.2 + i * 0.25, introT);
   }
-  drawTextAt(HERO.prompt.row, HERO.prompt.col, HERO.prompt.s, hslk(160, 40, 60), 20, 2.5, introT);
+  drawTextAt(HERO.prompt.row, HERO.prompt.col, HERO.prompt.s, hslk(195, 55, 66), 20, 2.5, introT);
   if (introT > 2.9 && scrollRow < 2) {
     const sy = HERO.hint.row - scrollRow + (REDUCED ? 0 : Math.round(Math.sin(t * 3) * 0.6));
-    put(HERO.hint.col + 0.5, sy + 0.5, code('v'), hslk(160, 50, 70, 0.8), 20);
+    put(HERO.hint.col + 0.5, sy + 0.5, code('v'), hslk(195, 55, 72, 0.8), 20);
   }
 }
 
@@ -1004,7 +1095,7 @@ function frame() {
   chr.fill(0); dep.fill(-1e9); haloN = 0;
   navLayout();
   revealSections(t);
-  drawDust(t);
+  drawStars(t);
   drawHero(t, introT);
   drawDoc(t);
   drawNav(t, introT);

@@ -6,10 +6,10 @@ Three languages each have a real job:
 
 | Part | Language | Job |
 |---|---|---|
-| `engine/` | C++17 | `asciigen` renders the block-letter name and section banners from a 5x7 font, and generates the 3D network-constellation scene (nodes, edges, wireframe globe). Deterministic, so output is byte-identical across compilers. |
+| `engine/` | C++17 | `asciigen` renders the block-letter name and section banners from a 5x7 font, and generates the 3D scene data that the page renders as a supernova remnant (knots, filaments and a nebula shell). Deterministic, so output is byte-identical across compilers. |
 | `builder/` | Python 3.9+ (stdlib only) | `build.py` validates `content/site.json`, runs the engine, and inlines content, assets and `web/app.js` into one `dist/index.html`, plus a hidden semantic copy of the content for screen readers, search engines and no-JS visitors. `lint.py` enforces the project rules. |
 | `server/` | Go (stdlib only) | Serves the site from an embedded copy as one static binary, with a hash-based Content-Security-Policy, security headers, gzip/ETag, `/healthz`, `/readyz` and Prometheus `/metrics`. Graceful shutdown on SIGTERM. |
-| `web/` | JavaScript | The in-browser renderer: layout, scrolling, navigation, intro animation, globe, sound. |
+| `web/` | JavaScript | The in-browser renderer: layout, scrolling, navigation, starfield, supernova, sound. |
 
 ## Prerequisites
 
