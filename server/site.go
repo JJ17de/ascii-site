@@ -204,7 +204,7 @@ func compressible(ext string) bool {
 func htmlCSP(scripts, styles []string) string {
 	return "default-src 'none'; script-src " + sourceList(scripts) +
 		"; style-src " + sourceList(styles) +
-		"; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		"; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 }
 
 func sourceList(hashes []string) string {

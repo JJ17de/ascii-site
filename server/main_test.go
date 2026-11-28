@@ -93,7 +93,7 @@ func TestCSPHeaderMatchesInlineHashes(t *testing.T) {
 	}
 	want := "default-src 'none'; script-src " + wantHash(testScript) +
 		"; style-src " + wantHash(testStyle) +
-		"; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		"; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 	checkSecurityHeaders(t, rr, want)
 }
 

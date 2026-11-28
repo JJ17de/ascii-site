@@ -57,6 +57,7 @@ type Metrics struct {
 	requests  map[requestKey]uint64
 	durations map[string]*histogram
 	respBytes map[string]uint64
+	contacts  map[string]uint64
 }
 
 // NewMetrics returns an empty registry stamped with build information.
@@ -69,7 +70,15 @@ func NewMetrics(version, commit string) *Metrics {
 		requests:  make(map[requestKey]uint64),
 		durations: make(map[string]*histogram),
 		respBytes: make(map[string]uint64),
+		contacts:  make(map[string]uint64),
 	}
+}
+
+// contact counts one contact-form submission by result.
+func (m *Metrics) contact(result string) {
+	m.mu.Lock()
+	m.contacts[result]++
+	m.mu.Unlock()
 }
 
 // observe records one completed request.
@@ -182,6 +191,11 @@ func (m *Metrics) Render(w io.Writer, siteFiles int) (int64, error) {
 	writeHeader(&b, "http_response_bytes_total", "counter", "Total response body bytes written by normalized route.")
 	for _, route := range sortedKeys(m.respBytes) {
 		writeSample(&b, "http_response_bytes_total", strconv.FormatUint(m.respBytes[route], 10), "route", route)
+	}
+
+	writeHeader(&b, "contact_submissions_total", "counter", "Contact form submissions by result (sent, invalid, limited, offline, error, spam).")
+	for _, result := range sortedKeys(m.contacts) {
+		writeSample(&b, "contact_submissions_total", strconv.FormatUint(m.contacts[result], 10), "result", result)
 	}
 	m.mu.Unlock()
 

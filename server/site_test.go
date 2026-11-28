@@ -144,7 +144,7 @@ func TestLoadSiteSkipsHiddenAndBuildsCSP(t *testing.T) {
 		t.Fatalf("Len = %d, want 2 (hidden files skipped)", site.Len())
 	}
 	want := "default-src 'none'; script-src " + wantHash("b()") + "; style-src " + wantHash("a{}") +
-		"; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		"; img-src data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 	if got := site.Lookup("index.html").csp; got != want {
 		t.Errorf("csp = %q\nwant  %q", got, want)
 	}

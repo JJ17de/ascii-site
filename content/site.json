@@ -1,21 +1,49 @@
 {
   "name": "Joshua D. Jones",
   "title": "DevOps Engineer",
-  "tagline": "Secure delivery, hardened containers, and observable Kubernetes.",
-  "location": "Colorado Springs, CO",
+  "tagline": "Software Development, CI/CD, and Kubernetes",
+  "location": "Colorado Springs, CO (Open to relocation)",
   "summary": [
-    "I build and ship software into secure environments: distroless images, GitOps pipelines, and Kubernetes clusters that are hardened by default and observable from day one.",
-    "Currently a DevOps Engineer at KBR, finishing an M.Eng. in Cybersecurity at UCCS, and preparing for the CKA."
+    "I grew up building Legos and playing sports. Then in middle school football I took a hit so hard my body was parallel to the ground and I was making direct eye contact with the sun. That's when I turned to computers and technology.",
+    "Building stuff on a computer felt a lot like building Legos, with the fun and frustrations of sports, minus getting my soul knocked out of my body. That started with campus networks, switches, patch panels, all of it, and turned into pipelines, containers, and Kubernetes.",
+    "Now I'm a DevOps engineer working on CI/CD pipelines and Kubernetes deployments, and researching and mitigating vulnerabilities in source code. I'm finishing my M.Eng. in Cybersecurity at UCCS this December and studying for the CKA."
+  ],
+  "whoami": "Lowks just a guy who likes legos, basketball, football, baseball, bowling, lifting, and booking flights I probably shouldn't ",
+  "taglines": {
+    "about": "Part software engineer, part network tech, all in on automation",
+    "education": "From sea level to 6,035 feet",
+    "certifications": "Proof that I actually read the docs",
+    "experience": "From patch panels to pipelines",
+    "skills": "Still can't change my cars oil tho",
+    "projects": "Things I built cause I couldn't sleep",
+    "contact": "Hit me up! I'll get back to you before the Cowboys win another Super Bowl!"
+  },
+  "stack": [
+    { "label": "Rendered in", "items": ["JavaScript (Canvas 2D)", "C++"] },
+    { "label": "Built with", "items": ["Python"] },
+    { "label": "Styled in", "items": ["JavaScript", "CSS"] },
+    { "label": "Served by", "items": ["Go"] },
+    {
+      "label": "Deployed with",
+      "items": ["Docker", "Kubernetes", "GitHub Actions", "Argo CD"]
+    },
+    { "label": "Automated using", "items": ["Terraform"] },
+    { "label": "Monitored with", "items": ["Prometheus", "Grafana"] }
   ],
   "links": [
-    { "label": "LinkedIn", "url": "https://www.linkedin.com/in/joshuadomjones/" },
-    { "label": "GitHub", "url": "https://github.com/JJ17de" }
+    {
+      "label": "LinkedIn",
+      "url": "https://www.linkedin.com/in/joshuadomjones/",
+      "icon": "profile"
+    },
+    { "label": "GitHub", "url": "https://github.com/JJ17de", "icon": "code" }
   ],
   "email": "",
   "experience": [
     {
       "role": "DevOps Engineer I",
       "org": "KBR, Inc",
+      "art": "redrocks",
       "place": "Colorado Springs, CO",
       "dates": "Sep 2026 - Present",
       "points": [
@@ -28,11 +56,12 @@
     {
       "role": "DevSecOps Engineer Intern",
       "org": "JT4, LLC",
+      "art": "vegas",
       "place": "Las Vegas, NV",
       "dates": "May 2026 - Aug 2026",
       "points": [
         "Built multi-branch GitHub Actions CI/CD pipelines (flake8, pytest, CodeQL, Trivy) publishing images to Nexus, with continuous delivery to Kubernetes via Argo CD.",
-        "Configured a three-node Talos Linux Kubernetes cluster from scratch, including CNI, VIP, and etcd.",
+        "Configured a three-node Kubernetes cluster on Linux from scratch, including CNI, VIP, and etcd.",
         "Deployed apps with Gateway API (HTTPRoute/GRPCRoute) under the PodSecurity restricted policy, and managed ARC scale sets for self-hosted runners.",
         "Implemented monitoring with kube-prometheus-stack and Grafana, using Thanos and MinIO to consolidate metrics from three clusters into one dashboard with long-term retention."
       ]
@@ -40,6 +69,7 @@
     {
       "role": "Network Operations Technician",
       "org": "OIT, University of Colorado, Colorado Springs",
+      "art": "pikespeak",
       "place": "Colorado Springs, CO",
       "dates": "Jun 2025 - Aug 2026",
       "points": [
@@ -51,39 +81,86 @@
     {
       "role": "IT Specialist, Support",
       "org": "University Technology Services, University of Denver",
+      "art": "denver",
       "place": "Denver, CO",
       "dates": "Sep 2024 - Jan 2025",
       "points": [
         "Provided Tier 1 and 2 support across Windows, macOS, and virtual machines.",
         "Administered Active Directory, Exchange, Jamf, network printing, and VMware VM deployments."
       ]
+    },
+    {
+      "role": "Network Operations Technician",
+      "org": "IT Center, University of Hawaii at Manoa",
+      "art": "beach",
+      "place": "Honolulu, HI",
+      "dates": "May 2023 - Jun 2024",
+      "points": [
+        "Provided Tier 3 support and managed trouble reports through the ticketing system.",
+        "Monitored network systems and installed and configured Cisco, HP, and Aruba switches and access points.",
+        "Built Cat6 and USOC cables and activated data jacks via patch panel and 110 block.",
+        "Diagnosed network connectivity issues and documented infrastructure changes."
+      ]
     }
   ],
   "skills": [
-    { "group": "Platform", "items": ["Kubernetes", "Talos Linux", "Helm", "Cilium", "Docker", "Zarf", "Terraform", "Ansible", "AWS", "Azure"] },
-    { "group": "Delivery", "items": ["GitLab CI", "GitHub Actions", "Argo CD", "GitOps", "Nexus", "Air-gapped deployments"] },
-    { "group": "Security", "items": ["Trivy", "Grype", "Syft", "CodeQL", "SonarQube", "SBOM generation", "Container hardening", "SAST/SCA"] },
-    { "group": "Observability", "items": ["Prometheus", "Grafana", "Thanos", "MinIO", "Multi-cluster monitoring"] },
-    { "group": "Languages", "items": ["Go", "Python", "C/C++", "Bash", "PowerShell"] },
-    { "group": "Networking & IT", "items": ["Cisco", "Aruba", "Active Directory", "Jamf", "Apache Kafka"] }
+    {
+      "group": "Platform",
+      "items": ["Kubernetes", "Linux", "Helm", "Cilium", "Docker", "Zarf", "Terraform", "Ansible", "AWS", "Azure"]
+    },
+    {
+      "group": "Delivery",
+      "items": ["GitLab CI", "GitHub Actions", "Argo CD", "GitOps", "Nexus", "Air-gapped deployments", "Git", "CI/CD Pipeline Design"]
+    },
+    {
+      "group": "Security",
+      "items": ["Trivy", "Grype", "Syft", "CodeQL", "SonarQube", "SBOM generation", "Container hardening", "SAST/SCA", "Vulnerability Remediation"]
+    },
+    {
+      "group": "Observability",
+      "items": ["Prometheus", "Grafana", "Thanos", "MinIO", "Multi-cluster monitoring"]
+    },
+    {
+      "group": "Languages",
+      "items": ["Go", "Python", "C/C++", "Bash", "YAML"]
+    },
+    {
+      "group": "Networking & IT",
+      "items": ["Active Directory", "Jamf", "Apache Kafka", "Network Troubleshooting"]
+    }
   ],
   "certifications": [
-    { "name": "Certified Kubernetes Administrator (CKA)", "dates": "Exam scheduled Dec 2026" },
-    { "name": "CompTIA CSAP (Security Analytics Professional)", "dates": "Mar 2026 - Mar 2029" },
-    { "name": "CompTIA CySA+ (Cybersecurity Analyst)", "dates": "Mar 2026 - Mar 2029" },
+    {
+      "name": "Certified Kubernetes Administrator (CKA)",
+      "dates": "Exam scheduled Dec 2026"
+    },
+    {
+      "name": "CompTIA CSAP (Security Analytics Professional)",
+      "dates": "Mar 2026 - Mar 2029"
+    },
+    {
+      "name": "CompTIA CySA+ (Cybersecurity Analyst)",
+      "dates": "Mar 2026 - Mar 2029"
+    },
     { "name": "CompTIA Security+", "dates": "Feb 2026 - Mar 2029" }
   ],
   "education": [
-    { "school": "University of Colorado, Colorado Springs", "degree": "M.Eng. in Cybersecurity", "dates": "Jan 2025 - Dec 2026" },
-    { "school": "University of Hawaii at Manoa", "degree": "B.A. in Computer Science", "dates": "Aug 2021 - Aug 2024" }
+    {
+      "school": "University of Colorado, Colorado Springs",
+      "degree": "M.Eng. in Cybersecurity",
+      "dates": "Jan 2025 - Dec 2026",
+      "emblem": "mountains",
+      "note": "Final semester."
+    },
+    {
+      "school": "University of Hawaii at Manoa",
+      "degree": "B.A. in Computer Science",
+      "dates": "Aug 2021 - Aug 2024",
+      "emblem": "island",
+      "note": "Where it all started."
+    }
   ],
   "projects": [
-    {
-      "name": "This site",
-      "stack": "C++ - Python - Go",
-      "text": "A canvas-only ASCII site. A C++ engine generates the banners and the 3D supernova scene, a Python builder inlines everything into one self-contained page, and a Go server serves it with strict CSP and Prometheus metrics.",
-      "href": ""
-    },
     {
       "name": "ASCII Christmas tree",
       "stack": "JavaScript - Web Audio",
@@ -91,9 +168,9 @@
       "href": "lab/tree.html"
     },
     {
-      "name": "ASCII dunk",
+      "name": "ASCII leBron Fastbreak",
       "stack": "JavaScript - Web Audio",
-      "text": "A perspective-correct fastbreak tomahawk seen from under the rim, with an inverse-kinematics player rig and an arena that reacts to the play.",
+      "text": "A LeBron fastbreak dunk seen from under the rim, with an an arena that reacts to his greatness.",
       "href": "lab/dunk.html"
     }
   ]

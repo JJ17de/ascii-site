@@ -19,8 +19,20 @@ html,body{margin:0;padding:0;background:#060a1a;color:#d6dbe4;font:16px/1.6 Menl
 #a11y h3{font-size:1rem;margin:1.2rem 0 .2rem;}
 #a11y .meta{color:#98a2b3;}
 #a11y button{font:inherit;color:#9fe3c4;background:none;border:1px solid #4b5463;padding:.3rem .8rem;cursor:pointer;}
-.plain #back-ascii{display:inline-block;}
-#back-ascii{display:none;margin-bottom:1rem;}
+#cf{max-width:46rem;margin:0 auto 4rem;padding:0 1.25rem;}
+#cf label{display:block;margin:.8rem 0 .2rem;color:#98a2b3;}
+#cf input,#cf textarea{display:block;width:100%;box-sizing:border-box;font:inherit;color:#d6dbe4;background:#0b1024;border:1px solid #4b5463;padding:.4rem .5rem;}
+#cf textarea{min-height:8rem;}
+#cf button{font:inherit;color:#9fe3c4;background:none;border:1px solid #4b5463;padding:.3rem .8rem;margin-top:.8rem;cursor:pointer;}
+#cf .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;}
+.js #cf{position:fixed;left:0;top:0;width:0;height:0;margin:0;padding:0;overflow:visible;}
+.js #cf label,.js #cf-status,.js #cf h2{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+.js #cf input,.js #cf textarea,.js #cf button{position:fixed;left:-9999px;top:0;margin:0;padding:0;border:0;outline:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;caret-color:transparent;font-family:Menlo,Consolas,"DejaVu Sans Mono",monospace;resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:none;appearance:none;-webkit-appearance:none;border-radius:0;cursor:text;}
+.js #cf textarea{min-height:0;}
+.js #cf button{cursor:pointer;}
+.js #cf input::selection,.js #cf textarea::selection{background:transparent;}
+.js #cf input:-webkit-autofill{-webkit-box-shadow:0 0 0 1000px transparent inset;transition:background-color 99999s;}
+.js #cf input::placeholder,.js #cf textarea::placeholder{color:transparent;}
 .js #a11y{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;margin:-1px;padding:0;border:0;}
 </style>
 </head>
@@ -29,6 +41,19 @@ html,body{margin:0;padding:0;background:#060a1a;color:#d6dbe4;font:16px/1.6 Menl
 <main id="a11y">
 <!--@A11Y@-->
 </main>
+<form id="cf" method="post" action="/api/contact" novalidate>
+<h2>Send me a message</h2>
+<label for="cf-name">Name</label>
+<input id="cf-name" name="name" type="text" maxlength="100" autocomplete="name" required>
+<label for="cf-email">Email</label>
+<input id="cf-email" name="email" type="email" maxlength="254" autocomplete="email" required>
+<label for="cf-msg">Message</label>
+<textarea id="cf-msg" name="message" maxlength="4000" rows="6" required></textarea>
+<div class="hp" aria-hidden="true"><label for="cf-website">Leave this empty</label><input id="cf-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+<input id="cf-elapsed" name="elapsed" type="hidden" value="">
+<button id="cf-send" type="submit">Send</button>
+<p id="cf-status" role="status" aria-live="polite"></p>
+</form>
 <script>
 /*@APP@*/
 </script>

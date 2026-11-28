@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -33,10 +34,12 @@ var (
 const shutdownTimeout = 10 * time.Second
 
 type config struct {
-	addr  string
-	dir   string
-	hsts  bool
-	drain time.Duration
+	addr       string
+	dir        string
+	hsts       bool
+	drain      time.Duration
+	trustProxy bool
+	smtp       SMTPConfig
 }
 
 // parseConfig reads flags, falling back to the PORT and SITE_DIR
@@ -53,12 +56,29 @@ func parseConfig(args []string, getenv func(string) string, output io.Writer) (c
 	fset.StringVar(&c.addr, "addr", defAddr, "listen address (default from $PORT, else :8080)")
 	fset.StringVar(&c.dir, "dir", getenv("SITE_DIR"), "serve the site from this directory instead of the embedded copy (default $SITE_DIR)")
 	fset.BoolVar(&c.hsts, "hsts", false, "send Strict-Transport-Security (only when served over HTTPS)")
+	fset.BoolVar(&c.trustProxy, "trust-proxy", getenv("TRUST_PROXY") == "true", "use X-Forwarded-For for contact-form rate limiting (only behind a trusted proxy/ingress; env TRUST_PROXY=true)")
 	fset.DurationVar(&c.drain, "drain", 0, "on SIGTERM, report not-ready for this long before closing the listener (e.g. 5s behind a Kubernetes Service)")
 	if err := fset.Parse(args); err != nil {
 		return c, err
 	}
 	if fset.NArg() > 0 {
 		return c, fmt.Errorf("unexpected arguments: %q", fset.Args())
+	}
+	// Contact form delivery comes from the environment only, so the SMTP
+	// password never appears in a process listing.
+	c.smtp = SMTPConfig{
+		Host:     getenv("SMTP_HOST"),
+		Username: getenv("SMTP_USERNAME"),
+		Password: getenv("SMTP_PASSWORD"),
+		From:     getenv("CONTACT_FROM"),
+		To:       getenv("CONTACT_TO"),
+	}
+	if p := getenv("SMTP_PORT"); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n <= 0 || n > 65535 {
+			return c, fmt.Errorf("SMTP_PORT: invalid port %q", p)
+		}
+		c.smtp.Port = n
 	}
 	return c, nil
 }
@@ -120,7 +140,18 @@ func run(args []string, getenv func(string) string, logger *slog.Logger) error {
 		logger.Warn("index.html missing; /readyz will report 503", "source", source)
 	}
 
-	srv := NewServer(site, Options{Logger: logger, HSTS: cfg.hsts, Version: version, Commit: commit})
+	var mailer Mailer
+	if cfg.smtp.Configured() {
+		m, err := NewSMTPMailer(cfg.smtp)
+		if err != nil {
+			return fmt.Errorf("contact form: %w", err)
+		}
+		mailer = m
+	} else {
+		logger.Warn("contact form offline: set SMTP_HOST, CONTACT_FROM and CONTACT_TO to enable it")
+	}
+
+	srv := NewServer(site, Options{Logger: logger, HSTS: cfg.hsts, Version: version, Commit: commit, Mailer: mailer, TrustProxy: cfg.trustProxy})
 
 	ln, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
@@ -132,7 +163,8 @@ func run(args []string, getenv func(string) string, logger *slog.Logger) error {
 		"commit", commit,
 		"files", site.Len(),
 		"source", source,
-		"hsts", cfg.hsts)
+		"hsts", cfg.hsts,
+		"contact", mailer != nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

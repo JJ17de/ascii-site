@@ -22,6 +22,7 @@ const (
 	routeHealthz  = "/healthz"
 	routeReadyz   = "/readyz"
 	routeMetrics  = "/metrics"
+	routeContact  = "/api/contact"
 	routeStatic   = "static"
 	routeNotFound = "notfound"
 )
@@ -34,6 +35,11 @@ type Options struct {
 	HSTS    bool
 	Version string
 	Commit  string
+	// Mailer delivers contact-form messages; nil means the form reports
+	// "offline" instead of pretending to send.
+	Mailer Mailer
+	// TrustProxy uses X-Forwarded-For for contact rate limiting.
+	TrustProxy bool
 }
 
 // Server serves a Site plus the health, readiness and metrics endpoints.
@@ -43,6 +49,11 @@ type Server struct {
 	metrics  *Metrics
 	site     atomic.Pointer[Site]
 	shutting atomic.Bool
+
+	mailer        Mailer
+	trustProxy    bool
+	contactPerIP  *limiter
+	contactGlobal *limiter
 }
 
 // NewServer returns a Server for site. site may be nil, in which case only
@@ -56,6 +67,11 @@ func NewServer(site *Site, opts Options) *Server {
 		log:     logger,
 		hsts:    opts.HSTS,
 		metrics: NewMetrics(opts.Version, opts.Commit),
+
+		mailer:        opts.Mailer,
+		trustProxy:    opts.TrustProxy,
+		contactPerIP:  newLimiter(contactPerIPPerHour, time.Hour),
+		contactGlobal: newLimiter(contactAllPerHour, time.Hour),
 	}
 	s.site.Store(site)
 	return s
@@ -83,7 +99,7 @@ type routeHandler func(w http.ResponseWriter, r *http.Request, route string, f *
 // load time, so no request path can reach the underlying filesystem.
 func resolve(site *Site, urlPath string) (string, *file) {
 	switch urlPath {
-	case routeHealthz, routeReadyz, routeMetrics:
+	case routeHealthz, routeReadyz, routeMetrics, routeContact:
 		return urlPath, nil
 	}
 	name, ok := fileName(urlPath)
@@ -173,6 +189,10 @@ func (s *Server) finish(r *http.Request, route string, rec *recorder, start time
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, route string, f *file) {
+	if route == routeContact {
+		s.serveContact(w, r)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		s.writeError(w, r, http.StatusMethodNotAllowed, "method not allowed\n")
