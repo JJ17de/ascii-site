@@ -5,6 +5,7 @@ Usage: python tests/shoot.py [WIDTHxHEIGHT ...]
 Needs Playwright (python -m pip install playwright && python -m playwright install chromium).
 Screenshots go to tests/frames/. Fails on any console error or network request.
 """
+
 import pathlib
 import sys
 
@@ -30,19 +31,28 @@ with sync_playwright() as p:
     for vp in viewports:
         w, h = (int(v) for v in vp.split("x"))
         page = browser.new_page(viewport={"width": w, "height": h})
-        page.on("console", lambda m: problems.append(m.text) if m.type == "error" else None)
+        page.on(
+            "console", lambda m: problems.append(m.text) if m.type == "error" else None
+        )
         page.on("pageerror", lambda e: problems.append(str(e)))
-        page.on("request", lambda r: problems.append("request: " + r.url) if not r.url.startswith(("file:", "data:")) else None)
+        page.on(
+            "request",
+            lambda r: (
+                problems.append("request: " + r.url)
+                if not r.url.startswith(("file:", "data:"))
+                else None
+            ),
+        )
         page.add_init_script(INIT)
         page.goto(PAGE)
         page.evaluate("window.__step(1000/30, 15)")
-        page.screenshot(path=str(FRAMES / ("%s_intro.png" % vp)))
+        page.screenshot(path=str(FRAMES / (f"{vp}_intro.png")))
         page.evaluate("window.__step(1000/30, 90)")
-        page.screenshot(path=str(FRAMES / ("%s_hero.png" % vp)))
+        page.screenshot(path=str(FRAMES / (f"{vp}_hero.png")))
         for i, key in enumerate(["PageDown", "PageDown", "PageDown", "End"]):
             page.keyboard.press(key)
             page.evaluate("window.__step(1000/30, 45)")
-            page.screenshot(path=str(FRAMES / ("%s_scroll%d.png" % (vp, i + 1))))
+            page.screenshot(path=str(FRAMES / (f"{vp}_scroll{i + 1}.png")))
         page.close()
     browser.close()
 if problems:
