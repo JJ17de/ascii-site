@@ -193,8 +193,14 @@ func TestContactMethods(t *testing.T) {
 func TestLimiterWindow(t *testing.T) {
 	l := newLimiter(2, time.Minute)
 	t0 := time.Unix(0, 0)
-	if !l.allow("k", t0) || !l.allow("k", t0) || l.allow("k", t0) {
-		t.Fatal("limit not enforced")
+	if !l.allow("k", t0) {
+		t.Fatal("first request should be allowed")
+	}
+	if !l.allow("k", t0) {
+		t.Fatal("second request should be allowed")
+	}
+	if l.allow("k", t0) {
+		t.Fatal("third request should be blocked")
 	}
 	if !l.allow("k", t0.Add(time.Minute)) {
 		t.Fatal("window did not reset")
