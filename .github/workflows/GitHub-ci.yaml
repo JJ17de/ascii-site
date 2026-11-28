@@ -10,3 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: build
+        run: make server
+
+      - name: test
+        run: make test
+
+      - name: go test -race
+        working-directory: server
+        run: go test -race -count=1 ./...
