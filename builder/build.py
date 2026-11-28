@@ -384,7 +384,7 @@ def build_info(content_bytes, assets_bytes, app_bytes):
     except OSError:
         pass
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
-    utc = datetime.timezone.utc
+    utc = datetime.UTC
     when = (
         datetime.datetime.fromtimestamp(int(epoch), tz=utc)
         if epoch
