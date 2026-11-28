@@ -1,4 +1,5 @@
 """Unit tests for the Python builder (standard library only: python -m unittest)."""
+
 import copy
 import json
 import os
@@ -8,7 +9,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "builder"))
 
-import build  # noqa: E402
+import build
 
 
 def sample():
@@ -47,10 +48,15 @@ class ValidateTests(unittest.TestCase):
 
 class EscapingTests(unittest.TestCase):
     def test_script_json_cannot_close_the_script(self):
-        s = build.script_json({"x": "</script><script>alert(1)</script>", "y": "<!-- hi"})
+        s = build.script_json(
+            {"x": "</script><script>alert(1)</script>", "y": "<!-- hi"}
+        )
         self.assertNotIn("</script", s.lower())
         self.assertNotIn("<!--", s)
-        self.assertEqual(json.loads(s.replace("<\\/", "</").replace("<\\!--", "<!--"))["x"], "</script><script>alert(1)</script>")
+        self.assertEqual(
+            json.loads(s.replace("<\\/", "</").replace("<\\!--", "<!--"))["x"],
+            "</script><script>alert(1)</script>",
+        )
 
     def test_a11y_html_escapes_content(self):
         c = copy.deepcopy(sample())
@@ -62,7 +68,7 @@ class EscapingTests(unittest.TestCase):
     def test_a11y_has_every_section(self):
         out = build.a11y_html(sample())
         for s in build.SECTIONS:
-            self.assertIn('id="%s"' % s, out)
+            self.assertIn(f'id="{s}"', out)
 
 
 class BuiltPageTests(unittest.TestCase):
@@ -76,7 +82,15 @@ class BuiltPageTests(unittest.TestCase):
             self.page = f.read()
 
     def test_markers_replaced(self):
-        for marker in ("@CONTENT@", "@ASSETS@", "@BUILD@", "@APP@", "@A11Y@", "@TITLE@", "@DESC@"):
+        for marker in (
+            "@CONTENT@",
+            "@ASSETS@",
+            "@BUILD@",
+            "@APP@",
+            "@A11Y@",
+            "@TITLE@",
+            "@DESC@",
+        ):
             self.assertNotIn(marker, self.page)
 
     def test_one_script_one_style(self):

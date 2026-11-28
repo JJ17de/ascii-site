@@ -40,38 +40,52 @@ def check_page(path, allowed_urls, problems):
     with open(path, "r", encoding="utf-8") as f:
         page = f.read()
     rel = os.path.relpath(path, ROOT)
-    scripts = re.findall(r"<script\b([^>]*)>(.*?)</script>", page, flags=re.S | re.I)
-    styles = re.findall(r"<style\b[^>]*>(.*?)</style>", page, flags=re.S | re.I)
+    scripts = re.findall(
+        r"<script\b([^>]*)>(.*?)</script>", page, flags=re.DOTALL | re.IGNORECASE
+    )
+    styles = re.findall(
+        r"<style\b[^>]*>(.*?)</style>", page, flags=re.DOTALL | re.IGNORECASE
+    )
     if len(scripts) != 1:
-        problems.append("%s: expected exactly one <script>, found %d" % (rel, len(scripts)))
+        problems.append(f"{rel}: expected exactly one <script>, found {len(scripts)}")
     if len(styles) != 1:
-        problems.append("%s: expected exactly one <style>, found %d" % (rel, len(styles)))
+        problems.append(f"{rel}: expected exactly one <style>, found {len(styles)}")
     for attrs, _ in scripts:
         if "src" in attrs.lower():
-            problems.append("%s: external <script src> is not allowed" % rel)
-    if re.search(r"<link\b[^>]*rel=[\"']?stylesheet", page, re.I):
-        problems.append("%s: external stylesheet" % rel)
-    if re.search(r"<(img|iframe|object|embed|video|audio|source)\b", page, re.I):
-        problems.append("%s: embedded media element" % rel)
-    if re.search(r"@import|@font-face|url\(", "".join(styles), re.I):
-        problems.append("%s: CSS import, font or url()" % rel)
-    if re.search(r"\son[a-z]+\s*=", re.sub(r"<script\b.*?</script>", "", page, flags=re.S | re.I), re.I):
-        problems.append("%s: inline event handler attribute (breaks the CSP)" % rel)
-    if re.search(r"\sstyle\s*=", re.sub(r"<script\b.*?</script>", "", page, flags=re.S | re.I), re.I):
-        problems.append("%s: inline style attribute (breaks the CSP)" % rel)
+            problems.append(f"{rel}: external <script src> is not allowed")
+    if re.search(r"<link\b[^>]*rel=[\"']?stylesheet", page, re.IGNORECASE):
+        problems.append(f"{rel}: external stylesheet")
+    if re.search(
+        r"<(img|iframe|object|embed|video|audio|source)\b", page, re.IGNORECASE
+    ):
+        problems.append(f"{rel}: embedded media element")
+    if re.search(r"@import|@font-face|url\(", "".join(styles), re.IGNORECASE):
+        problems.append(f"{rel}: CSS import, font or url()")
+    if re.search(
+        r"\son[a-z]+\s*=",
+        re.sub(r"<script\b.*?</script>", "", page, flags=re.DOTALL | re.IGNORECASE),
+        re.IGNORECASE,
+    ):
+        problems.append(f"{rel}: inline event handler attribute (breaks the CSP)")
+    if re.search(
+        r"\sstyle\s*=",
+        re.sub(r"<script\b.*?</script>", "", page, flags=re.DOTALL | re.IGNORECASE),
+        re.IGNORECASE,
+    ):
+        problems.append(f"{rel}: inline style attribute (breaks the CSP)")
 
     code = scripts[0][1] if scripts else ""
     for pat, what in BANNED_CODE:
         for m in re.finditer(pat, code):
             line = code.count("\n", 0, m.start()) + 1
-            problems.append("%s: %s at script line %d" % (rel, what, line))
+            problems.append(f"{rel}: {what} at script line {line}")
 
     for m in re.finditer(r"https?://[^\s\"'<>)\\]+", page):
         url = m.group(0)
         if url.startswith("http://"):
-            problems.append("%s: plain http URL %s" % (rel, url))
+            problems.append(f"{rel}: plain http URL {url}")
         elif not any(url.startswith(a) for a in allowed_urls):
-            problems.append("%s: URL not listed in content/site.json: %s" % (rel, url))
+            problems.append(f"{rel}: URL not listed in content/site.json: {url}")
     return code
 
 
@@ -81,9 +95,15 @@ def check_source_comments(path, problems):
             stripped = line.strip()
             if stripped.startswith("//") or "//" not in stripped:
                 continue
-            body = re.sub(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|/(?![*/])(?:\\.|[^/\\\n])+/[gimsuy]*", "", stripped)
+            body = re.sub(
+                r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|/(?![*/])(?:\\.|[^/\\\n])+/[gimsuy]*",
+                "",
+                stripped,
+            )
             if "//" in body:
-                problems.append("%s:%d: // comment after code" % (os.path.relpath(path, ROOT), n))
+                problems.append(
+                    f"{os.path.relpath(path, ROOT)}:{n}: // comment after code"
+                )
 
 
 def main():
@@ -105,13 +125,16 @@ def main():
     check_source_comments(os.path.join(ROOT, "web", "app.js"), problems)
     size = os.path.getsize(index)
     if size > 400 * 1024:
-        problems.append("dist/index.html is %.0f KB; budget is 400 KB" % (size / 1024.0))
+        problems.append(
+            "dist/index.html is %.0f KB; budget is 400 KB" % (size / 1024.0)
+        )
     if problems:
-        print("lint: %d problem(s)" % len(problems))
+        print(f"lint: {len(problems)} problem(s)")
         for p in problems:
             print("  - " + p)
         return 1
-    print("lint: ok (%d KB, %s)" % (size // 1024, "index + lab" if os.path.isdir(lab) else "index"))
+    scope = "index + lab" if os.path.isdir(lab) else "index"
+    print(f"lint: ok ({size // 1024} KB, {scope})")
     return 0
 
 
