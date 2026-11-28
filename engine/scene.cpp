@@ -38,6 +38,7 @@ void detSinCos(double x, double& s, double& c) {
     const double kf = std::floor(x * invPio2 + 0.5);
     const double r = (x - kf * pio2Hi) - kf * pio2Lo;
     const double r2 = r * r;
+    // clang-format off: keep the Horner polynomials aligned by term.
     const double sr =
         r * (1.0 + r2 * (-1.0 / 6.0 + r2 * (1.0 / 120.0 + r2 * (-1.0 / 5040.0 +
              r2 * (1.0 / 362880.0 + r2 * (-1.0 / 39916800.0 +
@@ -47,12 +48,25 @@ void detSinCos(double x, double& s, double& c) {
               r2 * (1.0 / 40320.0 + r2 * (-1.0 / 3628800.0 +
               r2 * (1.0 / 479001600.0 + r2 * (-1.0 / 87178291200.0 +
               r2 * (1.0 / 20922789888000.0))))))));
+    // clang-format on
     const long long k = static_cast<long long>(kf);
     switch (((k % 4) + 4) % 4) {
-        case 0: s = sr;  c = cr;  break;
-        case 1: s = cr;  c = -sr; break;
-        case 2: s = -sr; c = -cr; break;
-        default: s = -cr; c = sr; break;
+        case 0:
+            s = sr;
+            c = cr;
+            break;
+        case 1:
+            s = cr;
+            c = -sr;
+            break;
+        case 2:
+            s = -sr;
+            c = -cr;
+            break;
+        default:
+            s = -cr;
+            c = sr;
+            break;
     }
 }
 
@@ -158,7 +172,8 @@ void buildIntraClusterEdges(const std::vector<Node>& nodes, std::set<Edge>& edge
     // Pass 2: guarantee degree >= 2 (only needed if the cap blocked a link).
     for (int i = 0; i < n; ++i) {
         const auto& cand = ranked[static_cast<std::size_t>(i)];
-        for (std::size_t k = 2; k < cand.size() && degree[static_cast<std::size_t>(i)] < kMinDegree; ++k) {
+        for (std::size_t k = 2; k < cand.size() && degree[static_cast<std::size_t>(i)] < kMinDegree;
+             ++k) {
             tryLink(i, cand[k]);
         }
     }
@@ -176,7 +191,9 @@ void addBridges(const std::vector<Node>& nodes, std::set<Edge>& edges, std::vect
         bi = bj = -1;
         for (int i = 0; i < n; ++i) {
             const Node& a = nodes[static_cast<std::size_t>(i)];
-            if (bridged[static_cast<std::size_t>(i)] || degree[static_cast<std::size_t>(i)] >= kMaxDegree) continue;
+            if (bridged[static_cast<std::size_t>(i)] ||
+                degree[static_cast<std::size_t>(i)] >= kMaxDegree)
+                continue;
             for (int j = i + 1; j < n; ++j) {
                 const Node& b = nodes[static_cast<std::size_t>(j)];
                 if (a.cluster == b.cluster) continue;
@@ -184,7 +201,9 @@ void addBridges(const std::vector<Node>& nodes, std::set<Edge>& edges, std::vect
                                  (a.cluster == cb && b.cluster == ca))) {
                     continue;
                 }
-                if (bridged[static_cast<std::size_t>(j)] || degree[static_cast<std::size_t>(j)] >= kMaxDegree) continue;
+                if (bridged[static_cast<std::size_t>(j)] ||
+                    degree[static_cast<std::size_t>(j)] >= kMaxDegree)
+                    continue;
                 if (edges.count(Edge(i, j))) continue;
                 const double d = dist2(a, b);
                 if (bi >= 0 && !(d < best)) continue;
@@ -195,7 +214,8 @@ void addBridges(const std::vector<Node>& nodes, std::set<Edge>& edges, std::vect
                     bool tooClose = false;
                     for (const auto& m : mids) {
                         const double ex = mx - m[0], ey = my - m[1], ez = mz - m[2];
-                        if (ex * ex + ey * ey + ez * ez < kBridgeMinSeparation * kBridgeMinSeparation) {
+                        if (ex * ex + ey * ey + ez * ez <
+                            kBridgeMinSeparation * kBridgeMinSeparation) {
                             tooClose = true;
                             break;
                         }

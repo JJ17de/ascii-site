@@ -15,7 +15,7 @@
 namespace asciigen {
 
 class SplitMix64 {
-public:
+   public:
     explicit SplitMix64(std::uint64_t seed) : state_(seed) {}
 
     std::uint64_t next() {
@@ -26,9 +26,7 @@ public:
     }
 
     // Uniform double in [0, 1) built from the top 53 bits (exact conversion).
-    double uniform() {
-        return static_cast<double>(next() >> 11) * (1.0 / 9007199254740992.0);
-    }
+    double uniform() { return static_cast<double>(next() >> 11) * (1.0 / 9007199254740992.0); }
 
     // Uniform double in [lo, hi).
     double uniform(double lo, double hi) {
@@ -36,7 +34,7 @@ public:
         return lo + (hi - lo) * u;
     }
 
-private:
+   private:
     std::uint64_t state_;
 };
 

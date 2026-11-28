@@ -36,19 +36,19 @@ struct Options {
 
 void printUsage(std::FILE* f) {
     std::fprintf(f,
-        "usage: asciigen --name \"<TEXT>\" [--tagline \"<TEXT>\"] [--headings \"a,b,c\"]\n"
-        "                [--seed N] [--out PATH] [--nodes N]\n"
-        "       asciigen --self-test\n"
-        "       asciigen --help\n"
-        "\n"
-        "  --name      text for the main banner (required)\n"
-        "  --tagline   optional second banner\n"
-        "  --headings  comma-separated section headings\n"
-        "              (default: %s)\n"
-        "  --seed      unsigned 64-bit seed (default: 2026)\n"
-        "  --nodes     constellation node count, %d..%d (default: 150)\n"
-        "  --out       output file, written atomically (default: stdout)\n",
-        kDefaultHeadings, kMinNodes, kMaxNodes);
+                 "usage: asciigen --name \"<TEXT>\" [--tagline \"<TEXT>\"] [--headings \"a,b,c\"]\n"
+                 "                [--seed N] [--out PATH] [--nodes N]\n"
+                 "       asciigen --self-test\n"
+                 "       asciigen --help\n"
+                 "\n"
+                 "  --name      text for the main banner (required)\n"
+                 "  --tagline   optional second banner\n"
+                 "  --headings  comma-separated section headings\n"
+                 "              (default: %s)\n"
+                 "  --seed      unsigned 64-bit seed (default: 2026)\n"
+                 "  --nodes     constellation node count, %d..%d (default: 150)\n"
+                 "  --out       output file, written atomically (default: stdout)\n",
+                 kDefaultHeadings, kMinNodes, kMaxNodes);
 }
 
 std::string trim(const std::string& s) {
@@ -177,8 +177,8 @@ Document buildDocument(const Options& o, std::vector<char32_t>* unknown) {
     for (std::size_t i = 0; i < c.nodes.size(); ++i) {
         const Node& n = c.nodes[i];
         s += (i == 0) ? "\n      [" : ",\n      [";
-        s += json::number(n.x) + ", " + json::number(n.y) + ", " + json::number(n.z) +
-             ", " + std::to_string(n.cluster) + "]";
+        s += json::number(n.x) + ", " + json::number(n.y) + ", " + json::number(n.z) + ", " +
+             std::to_string(n.cluster) + "]";
     }
     s += "\n    ],\n";
     s += "    \"edges\": [";
@@ -255,13 +255,15 @@ struct Checker {
 };
 
 void checkBanner(Checker& t, const Banner& b, const std::string& label) {
-    t.check(b.size() == static_cast<std::size_t>(kGlyphHeight), label + ": banner must have 7 rows");
+    t.check(b.size() == static_cast<std::size_t>(kGlyphHeight),
+            label + ": banner must have 7 rows");
     if (b.empty()) return;
     const std::size_t w = b[0].size();
     bool lastColInked = (w == 0);
     for (const auto& r : b) {
         t.check(r.size() == w, label + ": rows must have equal length");
-        t.check(r.find_first_not_of("# ") == std::string::npos, label + ": only '#' and ' ' allowed");
+        t.check(r.find_first_not_of("# ") == std::string::npos,
+                label + ": only '#' and ' ' allowed");
         if (w > 0 && r.size() == w && r[w - 1] == '#') lastColInked = true;
     }
     t.check(lastColInked, label + ": trailing all-blank column");
@@ -273,19 +275,21 @@ void checkFont(Checker& t) {
         bool inked = false;
         for (int r = 0; r < kGlyphHeight; ++r) {
             const std::string row = g.rows[r] ? g.rows[r] : "";
-            t.check(row.size() == static_cast<std::size_t>(kGlyphWidth), label + ": row width != 5");
+            t.check(row.size() == static_cast<std::size_t>(kGlyphWidth),
+                    label + ": row width != 5");
             t.check(row.find_first_not_of("# ") == std::string::npos, label + ": bad pixel char");
             if (row.find('#') != std::string::npos) inked = true;
         }
-        t.check(g.ch == ' ' ? !inked : inked, label + (g.ch == ' ' ? ": space must be blank" : ": glyph is empty"));
+        t.check(g.ch == ' ' ? !inked : inked,
+                label + (g.ch == ' ' ? ": space must be blank" : ": glyph is empty"));
     }
-    const std::string required =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,-/&+':()!?";
+    const std::string required = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,-/&+':()!?";
     for (char ch : required) {
         t.check(findGlyph(ch) != nullptr, std::string("missing glyph '") + ch + "'");
     }
     std::vector<char32_t> unknown;
-    checkBanner(t, renderBanner("the quick brown fox 0123456789 .,-/&+':()!?", &unknown), "all-glyph banner");
+    checkBanner(t, renderBanner("the quick brown fox 0123456789 .,-/&+':()!?", &unknown),
+                "all-glyph banner");
     t.check(unknown.empty(), "all-glyph banner reported unknown characters");
     unknown.clear();
     const Banner q = renderBanner("a\xC3\xA9#", &unknown);  // 'e-acute' and '#'
@@ -317,7 +321,8 @@ void checkScene(Checker& t, const Constellation& c, int n, const std::string& la
             ++bridgeCount[static_cast<std::size_t>(e.second)];
         }
     }
-    t.check(bridges == kBridges, label + ": exactly 8 cross-cluster bridges (got " + std::to_string(bridges) + ")");
+    t.check(bridges == kBridges,
+            label + ": exactly 8 cross-cluster bridges (got " + std::to_string(bridges) + ")");
     for (int i = 0; i < n; ++i) {
         const int d = degree[static_cast<std::size_t>(i)];
         t.check(d >= kMinDegree && d <= kMaxDegree,
@@ -342,7 +347,8 @@ int runSelfTest() {
     const int counts[] = {kMinNodes, 150, kMaxNodes};
     for (std::uint64_t seed : seeds) {
         for (int n : counts) {
-            const std::string label = "seed " + std::to_string(seed) + " nodes " + std::to_string(n);
+            const std::string label =
+                "seed " + std::to_string(seed) + " nodes " + std::to_string(n);
             Options o;
             o.name = "Joshua D. Jones";
             o.tagline = "DevOps Engineer - CI/CD & K8s: (Zarf + GitLab)! Why? It's fun.";
@@ -367,7 +373,8 @@ int runSelfTest() {
                 checkScene(t, a.scene, n, label);
                 Options o2 = o;
                 o2.seed = seed + 1;
-                t.check(buildDocument(o2, nullptr).json != a.json, label + ": different seed must differ");
+                t.check(buildDocument(o2, nullptr).json != a.json,
+                        label + ": different seed must differ");
             } catch (const std::exception& e) {
                 t.check(false, label + ": exception: " + e.what());
             }

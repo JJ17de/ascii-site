@@ -125,7 +125,10 @@ Banner renderBanner(const std::string& text, std::vector<char32_t>* unknown) {
                     }
                 }
             }
-            if (hi < lo) { lo = 0; hi = kGlyphWidth - 1; }
+            if (hi < lo) {
+                lo = 0;
+                hi = kGlyphWidth - 1;
+            }
         }
         for (int r = 0; r < kGlyphHeight; ++r) {
             rows[static_cast<std::size_t>(r)].append(g->rows[r] + lo,

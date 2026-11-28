@@ -22,7 +22,7 @@ struct Node {
 
 struct Constellation {
     std::vector<Node> nodes;
-    std::vector<std::pair<int, int>> edges;  // undirected, i<j, sorted, unique
+    std::vector<std::pair<int, int>> edges;    // undirected, i<j, sorted, unique
     std::vector<std::array<double, 3>> shell;  // wireframe globe on unit sphere
 };
 

@@ -22,11 +22,17 @@ inline std::size_t utf8Decode(const std::string& s, std::size_t i, char32_t& cp)
     char32_t v = 0;
     char32_t minv = 0;
     if ((c0 & 0xE0) == 0xC0) {
-        len = 2; v = c0 & 0x1F; minv = 0x80;
+        len = 2;
+        v = c0 & 0x1F;
+        minv = 0x80;
     } else if ((c0 & 0xF0) == 0xE0) {
-        len = 3; v = c0 & 0x0F; minv = 0x800;
+        len = 3;
+        v = c0 & 0x0F;
+        minv = 0x800;
     } else if ((c0 & 0xF8) == 0xF0) {
-        len = 4; v = c0 & 0x07; minv = 0x10000;
+        len = 4;
+        v = c0 & 0x07;
+        minv = 0x10000;
     } else {
         cp = 0xFFFD;
         return 1;
