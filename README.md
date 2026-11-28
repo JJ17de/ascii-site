@@ -1,6 +1,6 @@
 # ascii-site
 
-A personal, professional website drawn entirely in text characters on one `<canvas>`. It follows the same rules as the `ascii-tree` project: one self-contained HTML file, no libraries, images, fonts or network requests, glow only from character bloom and `+ : .` halos, clock-driven animation, and sound synthesized live with the Web Audio API (off until a visitor turns it on).
+A personal, professional website drawn entirely in text characters on one `<canvas>`. One self-contained HTML file, no libraries, images, fonts or network requests, glow only from character bloom and `+ : .` halos, clock-driven animation, and sound synthesized live with the Web Audio API (off until a visitor turns it on).
 
 Three languages each have a real job:
 
